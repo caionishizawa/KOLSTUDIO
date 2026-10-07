@@ -1,0 +1,389 @@
+import { create } from 'zustand'
+import type { Asset, AssetKind, FaceSettings, Interval, Project, Take, TakeAnalysis, Transform } from '../types'
+import { defaultFace, defaultProject } from '../types'
+import { classify, mediaTypeOf, naturalCompare, type DroppedFile } from '../lib/classify'
+import { autoAssignImages, MIN_IMAGE_WIDTH } from '../lib/images'
+import { analyzeTake, decodeAudioFile } from '../lib/silence'
+import { measureLoudness } from '../lib/loudness'
+import { probeImage, probeMedia, probeWithVideoElement } from '../media/probe'
+import { transcodeToH264 } from '../media/ffmpeg'
+import { buildTimeline, takeKept } from '../lib/timeline'
+
+export type Selection =
+  | { type: 'project' }
+  | { type: 'take'; id: string }
+  | { type: 'clip' }
+  | { type: 'reaction' }
+  | { type: 'music' }
+  | { type: 'title' }
+  | { type: 'image'; takeId: string; assetId: string }
+
+export interface Notice {
+  id: number
+  text: string
+  level: 'info' | 'warn' | 'error'
+}
+
+export interface ExportState {
+  running: boolean
+  progress: number
+  frame: number
+  totalFrames: number
+  etaSec: number | null
+  message: string
+  error: string | null
+  resultUrl: string | null
+  resultName: string | null
+}
+
+interface State {
+  assets: Record<string, Asset>
+  project: Project
+  analyses: Record<string, TakeAnalysis>
+  selection: Selection
+  playhead: number
+  playing: boolean
+  notices: Notice[]
+  exportState: ExportState
+  segmenterInfo: string
+
+  addFiles: (files: DroppedFile[], forcedKind?: AssetKind) => Promise<void>
+  removeAsset: (id: string) => void
+  setAssetKind: (id: string, kind: AssetKind) => void
+  updateProject: (patch: Partial<Project> | ((p: Project) => Partial<Project>)) => void
+  updateTake: (id: string, patch: Partial<Take> | ((t: Take) => Partial<Take>)) => void
+  reorderTakes: (from: number, to: number) => void
+  setTakeImages: (takeId: string, images: string[]) => void
+  moveImage: (assetId: string, fromTakeId: string | null, toTakeId: string, index?: number) => void
+  setImageTransform: (takeId: string, assetId: string, t: Partial<Transform>) => void
+  setTakeFace: (takeId: string, f: Partial<FaceSettings>) => void
+  addManualCut: (takeId: string, iv: Interval) => void
+  restoreCut: (takeId: string, iv: Interval) => void
+  reassignImages: () => void
+  select: (s: Selection) => void
+  setPlayhead: (t: number) => void
+  setPlaying: (p: boolean) => void
+  notify: (text: string, level?: Notice['level']) => void
+  dismissNotice: (id: number) => void
+  setExportState: (patch: Partial<ExportState>) => void
+  setSegmenterInfo: (s: string) => void
+}
+
+let idCounter = 0
+const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${(idCounter++).toString(36)}`
+
+export const useStore = create<State>((set, get) => ({
+  assets: {},
+  project: defaultProject(),
+  analyses: {},
+  selection: { type: 'project' },
+  playhead: 0,
+  playing: false,
+  notices: [],
+  exportState: {
+    running: false,
+    progress: 0,
+    frame: 0,
+    totalFrames: 0,
+    etaSec: null,
+    message: '',
+    error: null,
+    resultUrl: null,
+    resultName: null,
+  },
+  segmenterInfo: '',
+
+  notify: (text, level = 'info') => {
+    const id = ++idCounter
+    set((s) => ({ notices: [...s.notices, { id, text, level }] }))
+    if (level !== 'error') setTimeout(() => get().dismissNotice(id), 9000)
+  },
+  dismissNotice: (id) => set((s) => ({ notices: s.notices.filter((n) => n.id !== id) })),
+  setExportState: (patch) => set((s) => ({ exportState: { ...s.exportState, ...patch } })),
+  setSegmenterInfo: (segmenterInfo) => set({ segmenterInfo }),
+
+  select: (selection) => set({ selection }),
+  setPlayhead: (playhead) => set({ playhead }),
+  setPlaying: (playing) => set({ playing }),
+
+  updateProject: (patch) =>
+    set((s) => ({ project: { ...s.project, ...(typeof patch === 'function' ? patch(s.project) : patch) } })),
+
+  updateTake: (id, patch) =>
+    set((s) => ({
+      project: {
+        ...s.project,
+        takes: s.project.takes.map((t) => (t.id === id ? { ...t, ...(typeof patch === 'function' ? patch(t) : patch) } : t)),
+      },
+    })),
+
+  reorderTakes: (from, to) =>
+    set((s) => {
+      const takes = [...s.project.takes]
+      const [moved] = takes.splice(from, 1)
+      takes.splice(to, 0, moved)
+      return { project: { ...s.project, takes } }
+    }),
+
+  setTakeImages: (takeId, images) => {
+    get().updateTake(takeId, { images, imagesLocked: true, splits: [] })
+  },
+
+  moveImage: (assetId, fromTakeId, toTakeId, index) => {
+    const { project, updateTake } = get()
+    if (fromTakeId && fromTakeId !== toTakeId) {
+      const from = project.takes.find((t) => t.id === fromTakeId)
+      if (from) updateTake(fromTakeId, { images: from.images.filter((i) => i !== assetId), imagesLocked: true, splits: [] })
+    }
+    const to = get().project.takes.find((t) => t.id === toTakeId)
+    if (!to) return
+    const list = to.images.filter((i) => i !== assetId)
+    list.splice(index ?? list.length, 0, assetId)
+    updateTake(toTakeId, { images: list, imagesLocked: true, splits: [] })
+  },
+
+  setImageTransform: (takeId, assetId, t) =>
+    get().updateTake(takeId, (take) => ({
+      imageTransforms: {
+        ...take.imageTransforms,
+        [assetId]: { ...(take.imageTransforms[assetId] ?? { zoom: 1, x: 0, y: 0 }), ...t },
+      },
+    })),
+
+  setTakeFace: (takeId, f) => get().updateTake(takeId, (take) => ({ face: { ...take.face, ...f } })),
+
+  addManualCut: (takeId, iv) =>
+    get().updateTake(takeId, (take) => ({
+      manualCuts: [...take.manualCuts, iv],
+      manualKeeps: take.manualKeeps.filter((k) => k.end <= iv.start || k.start >= iv.end),
+    })),
+
+  restoreCut: (takeId, iv) =>
+    get().updateTake(takeId, (take) => ({
+      manualKeeps: [...take.manualKeeps, iv],
+      manualCuts: take.manualCuts.filter((c) => c.end <= iv.start || c.start >= iv.end),
+    })),
+
+  reassignImages: () => {
+    const { project, assets, analyses } = get()
+    const images = Object.values(assets).filter((a) => a.kind === 'image' && a.status === 'ready')
+    const inputs = { project, assets: new Map(Object.entries(assets)), analyses: new Map(Object.entries(analyses)) }
+    const durations = new Map<string, number>()
+    for (const t of project.takes) {
+      const kept = takeKept(inputs, t)
+      durations.set(
+        t.id,
+        kept.reduce((a, iv) => a + (iv.end - iv.start), 0),
+      )
+    }
+    const map = autoAssignImages(project.takes, images, durations)
+    set((s) => ({
+      project: {
+        ...s.project,
+        takes: s.project.takes.map((t) => {
+          const next = map.get(t.id) ?? t.images
+          const same = next.length === t.images.length && next.every((v, i) => v === t.images[i])
+          return same ? t : { ...t, images: next, splits: [] }
+        }),
+      },
+    }))
+  },
+
+  removeAsset: (id) => {
+    const a = get().assets[id]
+    if (!a) return
+    URL.revokeObjectURL(a.url)
+    set((s) => {
+      const assets = { ...s.assets }
+      delete assets[id]
+      const analyses = { ...s.analyses }
+      delete analyses[id]
+      const p = { ...s.project }
+      if (p.clipId === id) p.clipId = null
+      if (p.reactionId === id) p.reactionId = null
+      if (p.music.assetId === id) p.music = { ...p.music, assetId: null }
+      p.takes = p.takes
+        .filter((t) => t.assetId !== id)
+        .map((t) => (t.images.includes(id) ? { ...t, images: t.images.filter((i) => i !== id), splits: [] } : t))
+      return { assets, analyses, project: p, selection: { type: 'project' } }
+    })
+    get().reassignImages()
+  },
+
+  setAssetKind: (id, kind) => {
+    const a = get().assets[id]
+    if (!a || a.kind === kind) return
+    // tira do papel antigo
+    set((s) => {
+      const p = { ...s.project }
+      if (p.clipId === id) p.clipId = null
+      if (p.reactionId === id) p.reactionId = null
+      if (p.music.assetId === id) p.music = { ...p.music, assetId: null }
+      p.takes = p.takes
+        .filter((t) => t.assetId !== id)
+        .map((t) => (t.images.includes(id) ? { ...t, images: t.images.filter((i) => i !== id), splits: [] } : t))
+      return { project: p, assets: { ...s.assets, [id]: { ...s.assets[id], kind } } }
+    })
+    attachRole(get, set, get().assets[id])
+    get().reassignImages()
+  },
+
+  addFiles: async (files, forcedKind) => {
+    const created: Asset[] = []
+    for (const { file, folder } of files) {
+      const type = mediaTypeOf(file.name, file.type)
+      if (!type) {
+        get().notify(`Arquivo ignorado (formato não suportado): ${file.name}`, 'warn')
+        continue
+      }
+      let kind: AssetKind = forcedKind ?? classify(file.name, folder, type)
+      // coerência: imagem não pode ser take, etc.
+      if (type === 'image' && kind !== 'image') kind = 'image'
+      if (type === 'audio' && kind !== 'music') kind = 'music'
+      if (type === 'video' && (kind === 'music')) kind = 'take'
+      const asset: Asset = {
+        id: uid('a'),
+        kind,
+        name: file.name,
+        folder,
+        file,
+        url: URL.createObjectURL(file),
+        type,
+        status: 'pending',
+      }
+      created.push(asset)
+    }
+    if (created.length === 0) return
+    set((s) => {
+      const assets = { ...s.assets }
+      for (const a of created) assets[a.id] = a
+      return { assets }
+    })
+    await Promise.all(created.map((a) => prepareAsset(get, set, a.id)))
+    get().reassignImages()
+  },
+}))
+
+type Get = () => State
+type Set = (fn: (s: State) => Partial<State>) => void
+
+function patchAsset(set: Set, id: string, patch: Partial<Asset>) {
+  set((s) => (s.assets[id] ? { assets: { ...s.assets, [id]: { ...s.assets[id], ...patch } } } : {}))
+}
+
+async function prepareAsset(get: Get, set: Set, id: string) {
+  const asset = get().assets[id]
+  if (!asset) return
+  patchAsset(set, id, { status: 'probing' })
+  try {
+    if (asset.type === 'image') {
+      const info = await probeImage(asset.file)
+      const warning = (info.width ?? 0) < MIN_IMAGE_WIDTH ? `Imagem com ${info.width}px de largura: vai ficar borrada` : undefined
+      if (warning) get().notify(`${asset.name}: ${warning}`, 'warn')
+      patchAsset(set, id, { status: 'ready', width: info.width, height: info.height, warning })
+    } else {
+      let info
+      try {
+        info = await probeMedia(asset.file, asset.type)
+      } catch (e) {
+        if (asset.type === 'video') info = await probeWithVideoElement(asset.url)
+        else throw e
+      }
+      let file = asset.file
+      let url = asset.url
+      let warning: string | undefined
+      if (asset.type === 'video' && info.canDecodeVideo === false) {
+        get().notify(`${asset.name}: o Chrome não decodifica este vídeo (${info.videoCodec ?? 'codec desconhecido'}). Convertendo com FFmpeg…`, 'warn')
+        patchAsset(set, id, { status: 'transcoding' })
+        file = await transcodeToH264(asset.file)
+        URL.revokeObjectURL(url)
+        url = URL.createObjectURL(file)
+        warning = 'Convertido com FFmpeg (o Chrome não decodificava o original)'
+        info = await probeMedia(file, 'video')
+      }
+      patchAsset(set, id, {
+        status: 'ready',
+        file,
+        url,
+        warning,
+        duration: info.duration,
+        width: info.width,
+        height: info.height,
+        rotation: info.rotation,
+        hasAudio: info.hasAudio,
+      })
+    }
+    const ready = get().assets[id]
+    attachRole(get, set, ready)
+    // análise de áudio (takes e clipe)
+    if (ready.type === 'video' && (ready.kind === 'take' || ready.kind === 'clip') && ready.hasAudio) {
+      const buf = await decodeAudioFile(ready.file)
+      if (buf) {
+        const analysis = analyzeTake(buf)
+        if (ready.kind === 'clip') {
+          // clipe: não corta pausas, só normaliza volume
+          const l = measureLoudness(buf)
+          analysis.speech = []
+          analysis.loudness = l
+          analysis.gain = Number.isFinite(l) ? Math.min(8, Math.pow(10, (-16 - l) / 20)) : 1
+        }
+        set((s) => ({ analyses: { ...s.analyses, [id]: analysis } }))
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    patchAsset(set, id, { status: 'error', error: msg })
+    get().notify(`${asset.name}: ${msg}`, 'error')
+  }
+}
+
+/** Coloca o asset no papel certo do projeto (clipe, reação, take, música). */
+function attachRole(get: Get, set: Set, asset: Asset | undefined) {
+  if (!asset || asset.status !== 'ready') return
+  const { project } = get()
+  if (asset.kind === 'clip' && !project.clipId) {
+    set((s) => ({ project: { ...s.project, clipId: asset.id, clip: { ...s.project.clip, in: 0, out: null } } }))
+  } else if (asset.kind === 'reaction' && !project.reactionId) {
+    set((s) => ({ project: { ...s.project, reactionId: asset.id } }))
+  } else if (asset.kind === 'music' && !project.music.assetId) {
+    set((s) => ({ project: { ...s.project, music: { ...s.project.music, assetId: asset.id } } }))
+  } else if (asset.kind === 'take' && !project.takes.some((t) => t.assetId === asset.id)) {
+    set((s) => {
+      const take: Take = {
+        id: uid('t'),
+        assetId: asset.id,
+        enabled: true,
+        trimStart: 0,
+        trimEnd: 0,
+        speed: null,
+        face: { ...s.project.faceDefault },
+        images: [],
+        splits: [],
+        imageTransforms: {},
+        manualCuts: [],
+        manualKeeps: [],
+        imagesLocked: false,
+        cutout: true,
+      }
+      const takes = [...s.project.takes, take].sort((a, b) =>
+        naturalCompare(s.assets[a.assetId]?.name ?? '', s.assets[b.assetId]?.name ?? ''),
+      )
+      return { project: { ...s.project, takes } }
+    })
+  }
+}
+
+/** Seletor memoizável da linha do tempo. */
+export function selectTimelineInputs(s: State) {
+  return { project: s.project, assets: s.assets, analyses: s.analyses }
+}
+
+export function computeTimeline(s: Pick<State, 'project' | 'assets' | 'analyses'>) {
+  return buildTimeline({
+    project: s.project,
+    assets: new Map(Object.entries(s.assets)),
+    analyses: new Map(Object.entries(s.analyses)),
+  })
+}
+
+export { defaultFace }
