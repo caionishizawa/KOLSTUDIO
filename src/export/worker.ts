@@ -140,8 +140,8 @@ async function runExport(job: ExportJob, handle: FileSystemFileHandle | null) {
   const needsCutout = timeline.segments.some((s) => s.kind === 'react' || project.takes.find((t) => t.id === s.takeId)?.cutout !== false)
   if (needsCutout) {
     try {
-      segmenter = await Segmenter.create('GPU')
-      post({ type: 'info', text: `Recorte na exportação: MediaPipe (${segmenter.info.delegate})` })
+      segmenter = await Segmenter.create('GPU', job.segModel ?? 'multiclass')
+      post({ type: 'info', text: `Recorte na exportação: MediaPipe ${segmenter.info.model === 'multiclass' ? 'multiclasse' : 'simples'} (${segmenter.info.delegate})` })
     } catch (e) {
       post({ type: 'info', text: 'Recorte indisponível no worker, exportando sem recorte: ' + (e instanceof Error ? e.message : String(e)) })
     }
@@ -179,6 +179,7 @@ async function runExport(job: ExportJob, handle: FileSystemFileHandle | null) {
       const times: number[] = []
       for (let f = firstFrame; f <= lastFrame; f++) times.push(f / FPS)
       const srcTimes = times.map((t) => Math.min(seg.srcEnd - 1e-4, seg.srcStart + (t - seg.outStart) * seg.rate))
+      segmenter?.reset()
       const main = await getReader(seg.assetId)
       const mainIter = main.sink.samplesAtTimestamps(srcTimes)
 

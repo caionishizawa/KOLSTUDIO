@@ -19,6 +19,8 @@ export interface ExportJob {
   fileName: string
   /** Só para testes: 'vp9' usa VP9+Opus quando o navegador não tem H.264/AAC */
   debugCodec?: 'vp9'
+  /** Modelo de recorte (padrão multiclasse) */
+  segModel?: 'multiclass' | 'small'
 }
 
 export type WorkerIn =

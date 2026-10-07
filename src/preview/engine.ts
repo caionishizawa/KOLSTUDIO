@@ -52,12 +52,15 @@ export class PreviewEngine {
     this.loop = this.loop.bind(this)
     this.raf = requestAnimationFrame(this.loop)
     this.initSegmenter()
+    if (import.meta.env.DEV) (globalThis as unknown as { __engine: unknown }).__engine = this
   }
 
   private async initSegmenter() {
     try {
-      this.segmenter = await Segmenter.create('GPU')
-      this.onSegmenter?.(`MediaPipe (${this.segmenter.info.delegate})`)
+      const model = new URLSearchParams(location.search).get('model') === 'small' ? 'small' : 'multiclass'
+      this.segmenter = await Segmenter.create('GPU', model)
+      if (import.meta.env.DEV) (globalThis as unknown as { __seg: unknown }).__seg = this.segmenter
+      this.onSegmenter?.(`MediaPipe ${this.segmenter.info.model === 'multiclass' ? 'multiclasse' : 'simples'} (${this.segmenter.info.delegate})`)
       this.dirty = true
     } catch (e) {
       this.segmenterFailed = true
@@ -137,6 +140,7 @@ export class PreviewEngine {
 
   async seek(t: number) {
     if (!this.data) return
+    this.segmenter?.reset()
     this.time = Math.max(0, Math.min(this.data.timeline.duration, t))
     this.onTime?.(this.time)
     if (this.playing) {
@@ -245,6 +249,7 @@ export class PreviewEngine {
     if (!d) return
     const tl = d.timeline
     const idx = segmentIndexAt(tl, t)
+    if (idx !== this.segIndex) this.segmenter?.reset()
     this.segIndex = idx
     const seg = tl.segments[idx]
     if (!seg) return

@@ -126,7 +126,7 @@ function drawFace(ctx: AnyCtx, src: FaceSource, r: Rect, scratch: Scratch) {
   fc.imageSmoothingQuality = 'high'
   fc.drawImage(src.source, 0, 0, w, h)
   fc.globalCompositeOperation = 'destination-in'
-  fc.filter = 'blur(1.5px)'
+  fc.filter = 'blur(2px)'
   fc.drawImage(src.mask, 0, 0, w, h)
   fc.restore()
   ctx.drawImage(scratch.face, r.x, r.y, r.w, r.h)
