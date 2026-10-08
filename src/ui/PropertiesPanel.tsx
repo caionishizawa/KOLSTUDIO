@@ -362,6 +362,10 @@ function TakeProps({ takeId, timeline }: { takeId: string; timeline: Timeline })
       )}
 
       <h2>Rosto</h2>
+      <label className="check">
+        <input type="checkbox" checked={take.cutout !== false} onChange={(e) => updateTake(takeId, { cutout: e.target.checked })} />
+        Recortar o fundo neste take
+      </label>
       <div className="btn-group" style={{ marginBottom: 8 }}>
         {(['left', 'center', 'right'] as FaceAlign[]).map((al) => (
           <button key={al} className={take.face.align === al ? 'active' : ''} onClick={() => setTakeFace(takeId, { align: al, x: 0 })}>

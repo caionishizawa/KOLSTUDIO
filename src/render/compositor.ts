@@ -128,6 +128,25 @@ function drawFace(ctx: AnyCtx, src: FaceSource, r: Rect, scratch: Scratch) {
   fc.globalCompositeOperation = 'destination-in'
   fc.filter = 'blur(2px)'
   fc.drawImage(src.mask, 0, 0, w, h)
+  fc.filter = 'none'
+  // degradê onde o corpo encosta na borda do vídeo original (ombro, braço): some a linha reta
+  const fade = Math.round(w * 0.045)
+  if (fade > 2) {
+    const g = fc.createLinearGradient(0, 0, w, 0)
+    const f = fade / w
+    g.addColorStop(0, 'rgba(0,0,0,0)')
+    g.addColorStop(f, 'rgba(0,0,0,1)')
+    g.addColorStop(1 - f, 'rgba(0,0,0,1)')
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    fc.fillStyle = g
+    fc.fillRect(0, 0, w, h)
+    const gt = fc.createLinearGradient(0, 0, 0, h)
+    gt.addColorStop(0, 'rgba(0,0,0,0)')
+    gt.addColorStop(fade / h, 'rgba(0,0,0,1)')
+    gt.addColorStop(1, 'rgba(0,0,0,1)')
+    fc.fillStyle = gt
+    fc.fillRect(0, 0, w, h)
+  }
   fc.restore()
   ctx.drawImage(scratch.face, r.x, r.y, r.w, r.h)
 }
