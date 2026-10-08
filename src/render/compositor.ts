@@ -28,6 +28,9 @@ export interface TitleParams {
   x: number
   y: number
   width: number
+  style: 'red' | 'white'
+  uppercase: boolean
+  fontScale: number
 }
 
 export interface FrameParams {
@@ -151,19 +154,26 @@ function drawFace(ctx: AnyCtx, src: FaceSource, r: Rect, scratch: Scratch) {
   ctx.drawImage(scratch.face, r.x, r.y, r.w, r.h)
 }
 
-const TITLE_FONT_MAX = 64
+const TITLE_FONT_MAX = 76
 const TITLE_FONT_MIN = 34
-const TITLE_PAD_X = 40
-const TITLE_PAD_Y = 30
-const TITLE_RADIUS = 28
+const TITLE_PAD_X = 36
+const TITLE_PAD_Y = 22
+const TITLE_RADIUS = 14
 const TITLE_FONT_FAMILY =
   '"Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
 
-export function layoutTitle(ctx: AnyCtx, text: string, maxWidth: number): { lines: string[]; font: number } {
+function titleFont(px: number) {
+  return `900 ${px}px ${TITLE_FONT_FAMILY}`
+}
+
+export function layoutTitle(ctx: AnyCtx, text: string, maxWidth: number, fontScale = 1): { lines: string[]; font: number; textW: number } {
   const inner = maxWidth - TITLE_PAD_X * 2
   const paragraphs = text.split(/\n/)
-  for (let font = TITLE_FONT_MAX; font >= TITLE_FONT_MIN; font -= 2) {
-    ctx.font = `bold ${font}px ${TITLE_FONT_FAMILY}`
+  const max = Math.round(TITLE_FONT_MAX * fontScale)
+  const min = Math.min(max, TITLE_FONT_MIN)
+  const measure = (lines: string[]) => Math.max(0, ...lines.map((l) => ctx.measureText(l).width))
+  for (let font = max; font >= min; font -= 2) {
+    ctx.font = titleFont(font)
     const lines: string[] = []
     let ok = true
     for (const para of paragraphs) {
@@ -180,29 +190,45 @@ export function layoutTitle(ctx: AnyCtx, text: string, maxWidth: number): { line
       }
       if (cur) lines.push(cur)
     }
-    if (ok && lines.length <= 3) return { lines, font }
-    if (font === TITLE_FONT_MIN) return { lines: lines.slice(0, 3), font }
+    if (ok && lines.length <= 3) return { lines, font, textW: measure(lines) }
+    if (font <= min) {
+      const cut = lines.slice(0, 3)
+      return { lines: cut, font, textW: measure(cut) }
+    }
   }
-  return { lines: [text], font: TITLE_FONT_MIN }
+  ctx.font = titleFont(min)
+  return { lines: [text], font: min, textW: ctx.measureText(text).width }
 }
 
+/** Título: caixa (vermelha ou branca) ajustada ao texto, texto pesado, centralizado, até 3 linhas. */
 export function drawTitle(ctx: AnyCtx, t: TitleParams): Rect {
-  const { lines, font } = layoutTitle(ctx, t.text, t.width)
-  const lineH = font * 1.22
+  const text = t.uppercase ? t.text.toUpperCase() : t.text
+  const { lines, font, textW } = layoutTitle(ctx, text, t.width, t.fontScale)
+  const lineH = font * 1.12
   const boxH = lines.length * lineH + TITLE_PAD_Y * 2
-  const boxW = t.width
+  const boxW = Math.min(t.width, Math.ceil(textW) + TITLE_PAD_X * 2)
   const x = t.x - boxW / 2
   const y = t.y - boxH / 2
+  const red = t.style === 'red'
   ctx.save()
-  ctx.fillStyle = '#fff'
+  ctx.fillStyle = red ? '#e3151b' : '#fff'
   roundRect(ctx, x, y, boxW, boxH, TITLE_RADIUS)
   ctx.fill()
-  ctx.fillStyle = '#000'
-  ctx.font = `bold ${font}px ${TITLE_FONT_FAMILY}`
+  ctx.font = titleFont(font)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
   lines.forEach((line, i) => {
-    ctx.fillText(line, t.x, y + TITLE_PAD_Y + lineH * (i + 0.5))
+    const cy = y + TITLE_PAD_Y + lineH * (i + 0.5)
+    if (red) {
+      ctx.lineWidth = Math.max(3, font * 0.1)
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)'
+      ctx.strokeText(line, t.x, cy)
+      ctx.fillStyle = '#fff'
+    } else {
+      ctx.fillStyle = '#000'
+    }
+    ctx.fillText(line, t.x, cy)
   })
   ctx.restore()
   return { x, y, w: boxW, h: boxH }

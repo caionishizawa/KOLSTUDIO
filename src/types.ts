@@ -98,7 +98,19 @@ export interface Project {
   reactionId: string | null
   clip: { in: number; out: number | null; transform: Transform }
   takes: Take[]
-  title: { text: string; enabled: boolean; wholeVideo: boolean; x: number; y: number; width: number }
+  title: {
+    text: string
+    enabled: boolean
+    wholeVideo: boolean
+    x: number
+    y: number
+    width: number
+    /** 'red' = caixa vermelha com texto branco (padrão); 'white' = caixa branca com texto preto */
+    style: 'red' | 'white'
+    uppercase: boolean
+    /** Multiplicador do tamanho da fonte (redimensionar pelas alças) */
+    fontScale: number
+  }
   disclaimer: { text: string; enabled: boolean }
   music: { assetId: string | null; gainDb: number; start: number; muteDuringReact: boolean; ducking: boolean }
   speed: number
@@ -177,7 +189,7 @@ export function defaultProject(): Project {
     reactionId: null,
     clip: { in: 0, out: null, transform: defaultTransform() },
     takes: [],
-    title: { text: '', enabled: true, wholeVideo: false, x: CANVAS_W / 2, y: 260, width: 960 },
+    title: { text: '', enabled: true, wholeVideo: false, x: CANVAS_W / 2, y: 190, width: 1000, style: 'red', uppercase: true, fontScale: 1 },
     disclaimer: { text: DEFAULT_DISCLAIMER, enabled: true },
     music: { assetId: null, gainDb: -13, start: 0, muteDuringReact: false, ducking: false },
     speed: 1,

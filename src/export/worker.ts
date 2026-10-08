@@ -248,6 +248,9 @@ async function runExport(job: ExportJob, handle: FileSystemFileHandle | null) {
             x: project.title.x,
             y: project.title.y,
             width: project.title.width,
+            style: project.title.style,
+            uppercase: project.title.uppercase,
+            fontScale: project.title.fontScale,
           },
           disclaimer: project.disclaimer,
         }

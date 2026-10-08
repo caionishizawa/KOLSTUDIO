@@ -8,6 +8,14 @@ import { Segmenter } from '../render/segmenter'
 import { MaskReader } from '../cache/maskCache'
 import type { MaskInfo } from '../state/store'
 
+export type OverlayKind = 'face' | 'image' | 'clip' | 'title'
+export const HANDLE_SIZE = 28
+
+export function overlayRect(layout: FrameLayout | null, kind: OverlayKind | null) {
+  if (!layout || !kind) return null
+  return kind === 'face' ? layout.faceRect : kind === 'image' ? layout.imageRect : kind === 'clip' ? layout.clipRect : layout.titleRect
+}
+
 export interface EngineData {
   project: Project
   assets: Record<string, Asset>
@@ -46,6 +54,8 @@ export class PreviewEngine {
   private raf = 0
   private half = false
   lastLayout: FrameLayout | null = null
+  /** Elemento selecionado: desenha contorno e alças de redimensionar (só no preview) */
+  overlay: OverlayKind | null = null
   onTime: ((t: number) => void) | null = null
   onEnded: (() => void) | null = null
   onSegmenter: ((info: string) => void) | null = null
@@ -411,6 +421,9 @@ export class PreviewEngine {
         x: project.title.x,
         y: project.title.y,
         width: project.title.width,
+        style: project.title.style,
+        uppercase: project.title.uppercase,
+        fontScale: project.title.fontScale,
       },
       disclaimer: project.disclaimer,
     }
@@ -461,10 +474,45 @@ export class PreviewEngine {
     ctx.save()
     if (this.half) ctx.scale(0.5, 0.5)
     this.lastLayout = drawFrame(ctx, sources, params, this.scratch)
+    this.drawOverlay(ctx)
     ctx.restore()
   }
 
   /** Máscara do cache (pré-calculada) quando existe; senão, segmentação ao vivo. */
+  setOverlay(kind: OverlayKind | null) {
+    if (this.overlay !== kind) {
+      this.overlay = kind
+      this.dirty = true
+    }
+  }
+
+  private drawOverlay(ctx: CanvasRenderingContext2D) {
+    const r = overlayRect(this.lastLayout, this.overlay)
+    if (!r) return
+    ctx.save()
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+    ctx.lineWidth = 3
+    ctx.setLineDash([14, 10])
+    ctx.strokeRect(r.x, r.y, r.w, r.h)
+    ctx.setLineDash([])
+    const hs = HANDLE_SIZE
+    for (const [cx, cy] of [
+      [r.x, r.y],
+      [r.x + r.w, r.y],
+      [r.x, r.y + r.h],
+      [r.x + r.w, r.y + r.h],
+    ]) {
+      ctx.fillStyle = '#fff'
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(cx, cy, hs / 2, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
+
   private maskFor(v: HTMLVideoElement, now: number, assetId: string, srcTime: number): OffscreenCanvas | null {
     const info = this.data?.masks[assetId]
     if (info && info.status === 'done') {

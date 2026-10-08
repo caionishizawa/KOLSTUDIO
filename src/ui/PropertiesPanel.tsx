@@ -144,18 +144,39 @@ function TitleFields() {
           checked={title.wholeVideo}
           onChange={(e) => updateProject((p) => ({ title: { ...p.title, wholeVideo: e.target.checked } }))}
         />
-        Manter no vídeo todo (padrão: só na react)
+        Manter no vídeo todo (padrão: durante toda a react)
+      </label>
+      <div className="btn-group" style={{ marginBottom: 8 }}>
+        <button className={title.style === 'red' ? 'active' : ''} onClick={() => updateProject((p) => ({ title: { ...p.title, style: 'red' } }))}>
+          Vermelho / branco
+        </button>
+        <button className={title.style === 'white' ? 'active' : ''} onClick={() => updateProject((p) => ({ title: { ...p.title, style: 'white' } }))}>
+          Branco / preto
+        </button>
+      </div>
+      <label className="check">
+        <input type="checkbox" checked={title.uppercase} onChange={(e) => updateProject((p) => ({ title: { ...p.title, uppercase: e.target.checked } }))} />
+        Caixa alta
       </label>
       <Slider
-        label="Largura da caixa"
+        label="Tamanho da letra"
+        value={title.fontScale}
+        min={0.5}
+        max={1.6}
+        step={0.01}
+        onChange={(v) => updateProject((p) => ({ title: { ...p.title, fontScale: v } }))}
+        format={(v) => Math.round(v * 100) + '%'}
+      />
+      <Slider
+        label="Largura máxima da caixa"
         value={title.width}
         min={500}
-        max={1060}
+        max={1080}
         step={10}
         onChange={(v) => updateProject((p) => ({ title: { ...p.title, width: v } }))}
         format={(v) => `${v}px`}
       />
-      <button className="small" onClick={() => updateProject((p) => ({ title: { ...p.title, x: 540, y: 260 } }))}>
+      <button className="small" onClick={() => updateProject((p) => ({ title: { ...p.title, x: 540, y: 190, fontScale: 1 } }))}>
         Recentralizar título
       </button>
     </>
