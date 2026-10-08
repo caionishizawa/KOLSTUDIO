@@ -11,7 +11,9 @@ import { buildTimeline, takeKept } from '../lib/timeline'
 import { maskCacheKey, opfsAvailable } from '../cache/maskCache'
 import { MaskPrecomputer } from '../cache/precompute'
 
-export const MASK_MODEL = 'mediapipe'
+/** Modelo do pré-cálculo: RVM por padrão (estável entre quadros); ?maskmodel=mediapipe para comparar */
+export const MASK_MODEL: 'rvm' | 'mediapipe' =
+  typeof location !== 'undefined' && new URLSearchParams(location.search).get('maskmodel') === 'mediapipe' ? 'mediapipe' : 'rvm'
 
 export interface MaskInfo {
   key: string
@@ -100,7 +102,23 @@ function getPrecomputer(): MaskPrecomputer {
       onStatus: (key, status) => {
         if (status) patch(key, { status })
       },
-      onProgress: (key, frame, total) => patch(key, { status: 'running', progress: total ? frame / total : 0 }),
+      onProgress: (key, frame, total) => {
+        patch(key, { status: 'running', progress: total ? frame / total : 0 })
+        // GPU lenta (máquina fraca ou GL por software): troca para CPU e recomeça
+        const started = jobStart.get(key)
+        if (started === 0) jobStart.set(key, performance.now())
+        else if (started && MASK_MODEL === 'mediapipe' && maskDelegate === 'GPU' && frame >= 20) {
+          const msPerFrame = (performance.now() - started) / frame
+          if (msPerFrame > SLOW_GPU_MS_PER_FRAME) {
+            maskDelegate = 'CPU'
+            useStore.getState().notify('Recorte em segundo plano: GPU lenta neste computador, usando CPU.', 'info')
+            const id = keyToAsset.get(key)
+            const asset = id ? useStore.getState().assets[id] : undefined
+            precomputer?.cancel(key)
+            if (asset) setTimeout(() => enqueueMask(asset, key, true), 200)
+          }
+        }
+      },
       onDone: (r) => patch(r.key, { status: 'done', progress: 1 }),
       onError: (key, message) => {
         patch(key, { status: 'error', error: message })
@@ -109,6 +127,17 @@ function getPrecomputer(): MaskPrecomputer {
     })
   }
   return precomputer
+}
+
+/** Delegate do pré-cálculo: GPU por padrão; cai para CPU se a GPU se mostrar lenta (ou via ?maskdelegate=CPU). */
+let maskDelegate: 'GPU' | 'CPU' =
+  typeof location !== 'undefined' && new URLSearchParams(location.search).get('maskdelegate') === 'CPU' ? 'CPU' : 'GPU'
+const jobStart = new Map<string, number>()
+const SLOW_GPU_MS_PER_FRAME = 250
+
+function enqueueMask(asset: Asset, key: string, force = false) {
+  jobStart.set(key, 0)
+  getPrecomputer().enqueue(asset.file, key, { model: MASK_MODEL, fps: 30, maskWidth: 192, delegate: maskDelegate, force })
 }
 
 /** Agenda o pré-cálculo da máscara de recorte de um take ou da reação. */
@@ -121,7 +150,7 @@ function ensureMask(asset: Asset | undefined) {
   const cur = useStore.getState().masks[asset.id]
   if (cur && cur.key === key && cur.status !== 'error') return
   useStore.setState((s) => ({ masks: { ...s.masks, [asset.id]: { key, status: 'queued', progress: 0 } } }))
-  getPrecomputer().enqueue(asset.file, key, { fps: 30, maskWidth: 192 })
+  enqueueMask(asset, key)
 }
 
 export const useStore = create<State>((set, get) => ({

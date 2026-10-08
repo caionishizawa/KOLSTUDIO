@@ -1,4 +1,5 @@
 import { Segmenter } from '../render/segmenter'
+import { RvmSegmenter } from '../render/rvm'
 import type { MaskModel } from './protocol'
 
 /**
@@ -27,6 +28,18 @@ export async function createSegmenter(model: MaskModel, opts: SegmenterOptions =
       const seg = await Segmenter.create(opts.delegate ?? 'GPU', 'multiclass')
       return {
         label: `mediapipe ${seg.info.model}/${seg.info.delegate}`,
+        reset: () => seg.reset(),
+        segment: (source, w, h, ts) => seg.segment(source, w, h, ts),
+        close: () => seg.close(),
+      }
+    }
+    case 'rvm': {
+      // Robust Video Matting: memória temporal (sem tremido nem rastro) e borda de cabelo com alfa real.
+      // Backend wasm por padrão no pré-cálculo: previsível em máquinas fracas e sem risco de travar a GPU.
+      const backend = typeof location !== 'undefined' && new URLSearchParams(location.search).get('rvm') === 'webgpu' ? 'webgpu' : 'wasm'
+      const seg = await RvmSegmenter.create({ backend, inputWidth: 256 })
+      return {
+        label: `rvm ${seg.info.backend}`,
         reset: () => seg.reset(),
         segment: (source, w, h, ts) => seg.segment(source, w, h, ts),
         close: () => seg.close(),

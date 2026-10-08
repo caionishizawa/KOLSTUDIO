@@ -1,7 +1,7 @@
 /** Mensagens entre a thread principal e o worker de pré-cálculo de máscaras. */
 
 /** Nome do modelo de segmentação usado no pré-cálculo (entra na chave do cache). */
-export type MaskModel = 'mediapipe'
+export type MaskModel = 'mediapipe' | 'rvm'
 
 export interface PrecomputeStart {
   type: 'start'

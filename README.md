@@ -34,6 +34,13 @@ Alvo: Chrome desktop atualizado. Precisa de WebCodecs com H.264 + AAC (Chrome no
 
 Aparece um aviso e o arquivo é convertido localmente com FFmpeg.wasm antes de entrar no projeto.
 
+## Recorte de fundo
+
+- Logo depois do upload, cada take (e a reação) tem a máscara calculada **uma vez, em segundo plano**, e guardada no disco do navegador (OPFS). O preview e a exportação só leem a máscara pronta, por isso não pesam. O progresso aparece na lista de arquivos ("recorte 45%").
+- Modelo padrão do pré-cálculo: **Robust Video Matting** (ONNX Runtime Web, local). Tem memória temporal (sem tremido nem rastro) e borda de cabelo com transparência. Alternativa: `?maskmodel=mediapipe` na URL.
+- Enquanto a máscara não fica pronta, o preview usa o MediaPipe ao vivo.
+- Páginas de teste (só em dev): `/bench.html` compara MediaPipe e RVM lado a lado no mesmo vídeo; `/masktest.html` testa o cache.
+
 ## Stack
 
 Vite + React + TypeScript · Mediabunny (ler/gravar MP4, WebCodecs) · MediaPipe Image Segmenter (recorte, GPU) · SoundTouch (velocidade com tom preservado) · FFmpeg.wasm (fallback de decodificação).
