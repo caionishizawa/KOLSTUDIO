@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Asset, AssetKind, FaceSettings, Interval, Project, Take, TakeAnalysis, Transform } from '../types'
+import type { Asset, AssetKind, FaceSettings, Interval, Project, Take, TakeAnalysis, TakeOrder, Transform } from '../types'
 import { defaultFace, defaultProject } from '../types'
 import { classify, mediaTypeOf, naturalCompare, type DroppedFile } from '../lib/classify'
 import { autoAssignImages, MIN_IMAGE_WIDTH } from '../lib/images'
@@ -53,6 +53,7 @@ interface State {
   updateProject: (patch: Partial<Project> | ((p: Project) => Partial<Project>)) => void
   updateTake: (id: string, patch: Partial<Take> | ((t: Take) => Partial<Take>)) => void
   reorderTakes: (from: number, to: number) => void
+  setTakeOrder: (order: TakeOrder) => void
   setTakeImages: (takeId: string, images: string[]) => void
   moveImage: (assetId: string, fromTakeId: string | null, toTakeId: string, index?: number) => void
   setImageTransform: (takeId: string, assetId: string, t: Partial<Transform>) => void
@@ -70,6 +71,7 @@ interface State {
 }
 
 let idCounter = 0
+let uploadCounter = 0
 const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${(idCounter++).toString(36)}`
 
 export const useStore = create<State>((set, get) => ({
@@ -122,8 +124,15 @@ export const useStore = create<State>((set, get) => ({
       const takes = [...s.project.takes]
       const [moved] = takes.splice(from, 1)
       takes.splice(to, 0, moved)
-      return { project: { ...s.project, takes } }
+      return { project: { ...s.project, takes, takesManual: true } }
     }),
+
+  setTakeOrder: (order) => {
+    set((s) => ({
+      project: { ...s.project, takeOrder: order, takesManual: false, takes: sortTakes(s.project.takes, s.assets, order) },
+    }))
+    get().reassignImages()
+  },
 
   setTakeImages: (takeId, images) => {
     get().updateTake(takeId, { images, imagesLocked: true, splits: [] })
@@ -137,8 +146,11 @@ export const useStore = create<State>((set, get) => ({
     }
     const to = get().project.takes.find((t) => t.id === toTakeId)
     if (!to) return
+    const oldIdx = to.images.indexOf(assetId)
     const list = to.images.filter((i) => i !== assetId)
-    list.splice(index ?? list.length, 0, assetId)
+    let at = index ?? list.length
+    if (oldIdx >= 0 && index != null && oldIdx < index) at = index - 1
+    list.splice(Math.max(0, Math.min(list.length, at)), 0, assetId)
     updateTake(toTakeId, { images: list, imagesLocked: true, splits: [] })
   },
 
@@ -250,6 +262,8 @@ export const useStore = create<State>((set, get) => ({
         url: URL.createObjectURL(file),
         type,
         status: 'pending',
+        createdAt: file.lastModified || undefined,
+        uploadIndex: uploadCounter++,
       }
       created.push(asset)
     }
@@ -311,6 +325,7 @@ async function prepareAsset(get: Get, set: Set, id: string) {
         height: info.height,
         rotation: info.rotation,
         hasAudio: info.hasAudio,
+        createdAt: info.createdAt ?? asset.createdAt,
       })
     }
     const ready = get().assets[id]
@@ -365,12 +380,28 @@ function attachRole(get: Get, set: Set, asset: Asset | undefined) {
         imagesLocked: false,
         cutout: true,
       }
-      const takes = [...s.project.takes, take].sort((a, b) =>
-        naturalCompare(s.assets[a.assetId]?.name ?? '', s.assets[b.assetId]?.name ?? ''),
-      )
+      const takes = s.project.takesManual
+        ? [...s.project.takes, take]
+        : sortTakes([...s.project.takes, take], s.assets, s.project.takeOrder)
       return { project: { ...s.project, takes } }
     })
   }
+}
+
+/** Ordena os takes pelo critério escolhido. Data: gravação (metadados) ou modificação do arquivo. */
+export function sortTakes(takes: Take[], assets: Record<string, Asset>, order: TakeOrder): Take[] {
+  const byName = (a: Take, b: Take) => naturalCompare(assets[a.assetId]?.name ?? '', assets[b.assetId]?.name ?? '')
+  return [...takes].sort((a, b) => {
+    const aa = assets[a.assetId]
+    const ab = assets[b.assetId]
+    if (order === 'upload') return (aa?.uploadIndex ?? 0) - (ab?.uploadIndex ?? 0)
+    if (order === 'date') {
+      const da = aa?.createdAt ?? 0
+      const db = ab?.createdAt ?? 0
+      if (da && db && da !== db) return da - db
+    }
+    return byName(a, b)
+  })
 }
 
 /** Seletor memoizável da linha do tempo. */

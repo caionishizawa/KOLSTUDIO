@@ -11,6 +11,8 @@ export interface ProbeResult {
   /** O Chrome consegue decodificar o vídeo com WebCodecs? */
   canDecodeVideo?: boolean
   canDecodeAudio?: boolean
+  /** Data de gravação lida dos metadados do arquivo */
+  createdAt?: number
 }
 
 export async function probeImage(file: Blob): Promise<ProbeResult> {
@@ -36,6 +38,12 @@ export async function probeMedia(file: Blob, type: 'video' | 'audio'): Promise<P
     }
     if (audio) result.canDecodeAudio = await audio.canDecode()
     result.duration = await input.computeDuration()
+    try {
+      const tags = await input.getMetadataTags()
+      if (tags.date instanceof Date && !Number.isNaN(tags.date.getTime())) result.createdAt = tags.date.getTime()
+    } catch {
+      /* sem metadados */
+    }
     return result
   } finally {
     input.dispose()

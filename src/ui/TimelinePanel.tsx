@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type DragEvent, type PointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from 'react'
 import { useStore } from '../state/store'
 import type { Interval, Timeline } from '../types'
 import { fmtTime } from '../state/useTimeline'
@@ -24,6 +24,7 @@ export function TimelinePanel({ timeline }: { timeline: Timeline }) {
 
 function OutputRuler({ timeline }: { timeline: Timeline }) {
   const ref = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const assets = useStore((s) => s.assets)
   const project = useStore((s) => s.project)
   const playhead = useStore((s) => s.playhead)
@@ -33,22 +34,49 @@ function OutputRuler({ timeline }: { timeline: Timeline }) {
   const moveImage = useStore((s) => s.moveImage)
   const updateTake = useStore((s) => s.updateTake)
   const [dropOver, setDropOver] = useState<string | null>(null)
+  const [imgDrop, setImgDrop] = useState<{ takeId: string; index: number } | null>(null)
+  const [zoom, setZoom] = useState(1)
   const dragSplit = useRef<{ takeId: string; index: number; splits: number[]; start: number; end: number } | null>(null)
+  /** Aparar arrastando a alça do bloco: usa a linha do tempo congelada no início do arrasto */
+  const dragTrim = useRef<{ takeId: string; side: 'left' | 'right'; snap: Timeline; dur: number; srcDur: number } | null>(null)
 
   const dur = Math.max(0.01, timeline.duration)
   const pct = (t: number) => `${(t / dur) * 100}%`
 
-  const timeAt = (clientX: number) => {
+  const timeAt = (clientX: number, total = dur) => {
     const r = ref.current!.getBoundingClientRect()
-    return Math.max(0, Math.min(dur, ((clientX - r.left) / r.width) * dur))
+    return Math.max(0, Math.min(total, ((clientX - r.left) / r.width) * total))
   }
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('.tl-split') || (e.target as HTMLElement).closest('.tl-img')) return
+    const el = e.target as HTMLElement
+    if (el.closest('.tl-split') || el.closest('.tl-img') || el.closest('.tl-handle')) return
     setPlayhead(timeAt(e.clientX))
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const dt = dragTrim.current
+    if (dt) {
+      const t = timeAt(e.clientX, dt.dur)
+      const block = dt.snap.takeBlocks.find((b) => b.takeId === dt.takeId)
+      if (!block) return
+      const segs = dt.snap.segments.filter((s) => s.takeId === dt.takeId)
+      // converte tempo de saída (na linha congelada) em tempo do arquivo original
+      const toSrc = (tt: number) => {
+        const seg = segs.find((s) => tt >= s.outStart && tt < s.outEnd) ?? (tt < segs[0].outStart ? segs[0] : segs[segs.length - 1])
+        return Math.max(0, Math.min(dt.srcDur, seg.srcStart + (Math.max(seg.outStart, Math.min(seg.outEnd, tt)) - seg.outStart) * seg.rate))
+      }
+      if (dt.side === 'left') {
+        const tt = Math.max(block.outStart, Math.min(block.outEnd - 0.15, t))
+        const src = toSrc(tt)
+        updateTake(dt.takeId, (tk) => ({ trimStart: Math.min(src, dt.srcDur - tk.trimEnd - 0.1) }))
+      } else {
+        const tt = Math.max(block.outStart + 0.15, Math.min(block.outEnd, t))
+        const src = toSrc(tt)
+        updateTake(dt.takeId, (tk) => ({ trimEnd: Math.max(0, Math.min(dt.srcDur - src, dt.srcDur - tk.trimStart - 0.1)) }))
+      }
+      return
+    }
     const ds = dragSplit.current
     if (ds) {
       const t = timeAt(e.clientX)
@@ -64,6 +92,7 @@ function OutputRuler({ timeline }: { timeline: Timeline }) {
   }
   const onPointerUp = (e: PointerEvent<HTMLDivElement>) => {
     dragSplit.current = null
+    dragTrim.current = null
     try {
       ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
     } catch {
@@ -71,113 +100,195 @@ function OutputRuler({ timeline }: { timeline: Timeline }) {
     }
   }
 
-  const onDropOnTake = (e: DragEvent, takeId: string) => {
-    e.preventDefault()
-    setDropOver(null)
+  const startTrim = (e: PointerEvent<HTMLDivElement>, takeId: string, side: 'left' | 'right') => {
+    e.stopPropagation()
+    const take = project.takes.find((t) => t.id === takeId)
+    const srcDur = assets[take?.assetId ?? '']?.duration ?? 0
+    if (!take || srcDur <= 0) return
+    dragTrim.current = { takeId, side, snap: timeline, dur, srcDur }
+    select({ type: 'take', id: takeId })
+    ;(ref.current as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  const parseImageDrag = (e: DragEvent) => {
     const raw = e.dataTransfer.getData('application/x-kol-image')
-    if (!raw) return
+    if (!raw) return null
     try {
-      const { assetId, fromTakeId } = JSON.parse(raw) as { assetId: string; fromTakeId: string | null }
-      moveImage(assetId, e.altKey ? null : fromTakeId, takeId)
+      return JSON.parse(raw) as { assetId: string; fromTakeId: string | null }
     } catch {
-      /* ignora */
+      return null
     }
   }
 
+  const onDropOnTake = (e: DragEvent, takeId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropOver(null)
+    setImgDrop(null)
+    const d = parseImageDrag(e)
+    if (d) moveImage(d.assetId, e.altKey ? null : d.fromTakeId, takeId)
+  }
+
+  const onDropOnImage = (e: DragEvent, takeId: string, index: number) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropOver(null)
+    const d = parseImageDrag(e)
+    const target = imgDrop
+    setImgDrop(null)
+    if (!d) return
+    const at = target && target.takeId === takeId ? target.index : index
+    moveImage(d.assetId, e.altKey ? null : d.fromTakeId, takeId, at)
+  }
+
   const ticks = useMemo(() => {
-    const step = dur > 120 ? 30 : dur > 60 ? 10 : dur > 20 ? 5 : 1
+    const visible = dur / zoom
+    const step = visible > 120 ? 30 : visible > 60 ? 10 : visible > 20 ? 5 : visible > 8 ? 1 : 0.5
     const out: number[] = []
-    for (let t = 0; t <= dur; t += step) out.push(t)
+    for (let t = 0; t <= dur; t += step) out.push(+t.toFixed(2))
     return out
-  }, [dur])
+  }, [dur, zoom])
+
+  // mantém o playhead visível ao dar zoom
+  useEffect(() => {
+    const sc = scrollRef.current
+    if (!sc || zoom === 1) return
+    const x = (playhead / dur) * sc.scrollWidth
+    if (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth) sc.scrollLeft = Math.max(0, x - sc.clientWidth / 2)
+  }, [zoom, playhead, dur])
 
   return (
-    <div className="tl-ruler" ref={ref} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
-      {timeline.segments.length === 0 && <div className="tl-foot" style={{ padding: 10 }}>Linha do tempo vazia.</div>}
-      {timeline.reactDuration > 0 && (
+    <>
+      <div className="tl-scroll" ref={scrollRef}>
         <div
-          className={`tl-block react ${selection.type === 'clip' ? 'selected' : ''}`}
-          style={{ left: 0, width: pct(timeline.reactDuration) }}
-          onPointerDown={() => select({ type: 'clip' })}
-          title={`React · ${fmtTime(timeline.reactDuration)}`}
+          className="tl-ruler"
+          ref={ref}
+          style={{ width: `${zoom * 100}%` }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onWheel={(e) => {
+            if (!e.ctrlKey && !e.metaKey) return
+            e.preventDefault()
+            setZoom((z) => Math.max(1, Math.min(12, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))))
+          }}
         >
-          React · {fmtTime(timeline.reactDuration)}
+          {timeline.segments.length === 0 && <div className="tl-foot" style={{ padding: 10 }}>Linha do tempo vazia.</div>}
+          {timeline.reactDuration > 0 && (
+            <div
+              className={`tl-block react ${selection.type === 'clip' ? 'selected' : ''}`}
+              style={{ left: 0, width: pct(timeline.reactDuration) }}
+              onPointerDown={() => select({ type: 'clip' })}
+              title={`React · ${fmtTime(timeline.reactDuration)} · ajuste início e fim no painel da direita`}
+            >
+              <span className="tl-label">React · {fmtTime(timeline.reactDuration)}</span>
+            </div>
+          )}
+          {timeline.takeBlocks.map((b, i) => {
+            const take = project.takes.find((t) => t.id === b.takeId)
+            const name = assets[take?.assetId ?? '']?.name ?? ''
+            const isSel = selection.type === 'take' && selection.id === b.takeId
+            const trimmed = (take?.trimStart ?? 0) > 0 || (take?.trimEnd ?? 0) > 0
+            return (
+              <div
+                key={b.takeId}
+                className={`tl-block take ${isSel ? 'selected' : ''} ${dropOver === b.takeId ? 'drop-over' : ''}`}
+                style={{ left: pct(b.outStart), width: pct(b.outEnd - b.outStart) }}
+                onPointerDown={() => select({ type: 'take', id: b.takeId })}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes('application/x-kol-image')) {
+                    e.preventDefault()
+                    setDropOver(b.takeId)
+                  }
+                }}
+                onDragLeave={() => setDropOver(null)}
+                onDrop={(e) => onDropOnTake(e, b.takeId)}
+                title={`${name} · ${fmtTime(b.outEnd - b.outStart)}${trimmed ? ` · aparado ${fmtTime(take!.trimStart)} / ${fmtTime(take!.trimEnd)}` : ''} · arraste as bordas pra aparar`}
+              >
+                <div className="tl-handle left" onPointerDown={(e) => startTrim(e, b.takeId, 'left')} />
+                <span className="tl-label">
+                  {i + 1} · {name} <span className="tl-dur">{fmtTime(b.outEnd - b.outStart)}</span>
+                </span>
+                <div className="tl-handle right" onPointerDown={(e) => startTrim(e, b.takeId, 'right')} />
+              </div>
+            )
+          })}
+          {timeline.imageSpans.map((s) => {
+            const img = assets[s.assetId]
+            const take = project.takes.find((t) => t.id === s.takeId)
+            const inherited = !take?.images.includes(s.assetId)
+            const isSel = selection.type === 'image' && selection.takeId === s.takeId && selection.assetId === s.assetId
+            const dropHere = imgDrop && imgDrop.takeId === s.takeId
+            const dropBefore = dropHere && imgDrop!.index === s.index
+            const dropAfter = dropHere && imgDrop!.index === s.index + 1
+            return (
+              <div
+                key={`${s.takeId}-${s.index}`}
+                className={`tl-img ${inherited ? 'inherited' : ''} ${isSel ? 'selected' : ''} ${dropBefore ? 'drop-before' : ''} ${dropAfter ? 'drop-after' : ''}`}
+                style={{ left: pct(s.outStart), width: pct(s.outEnd - s.outStart) }}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/x-kol-image', JSON.stringify({ assetId: s.assetId, fromTakeId: inherited ? null : s.takeId }))
+                  e.dataTransfer.effectAllowed = 'copyMove'
+                }}
+                onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes('application/x-kol-image')) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  const after = e.clientX > r.left + r.width / 2
+                  const idx = inherited ? 0 : s.index + (after ? 1 : 0)
+                  setImgDrop((cur) => (cur && cur.takeId === s.takeId && cur.index === idx ? cur : { takeId: s.takeId, index: idx }))
+                  setDropOver(null)
+                }}
+                onDragLeave={() => setImgDrop(null)}
+                onDrop={(e) => onDropOnImage(e, s.takeId, inherited ? 0 : s.index)}
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  select({ type: 'image', takeId: s.takeId, assetId: s.assetId })
+                }}
+                title={`${img?.name ?? ''}${inherited ? ' (herdada do take anterior)' : ''} · arraste pra trocar de posição ou de take (Alt = copiar)`}
+              >
+                {img && <img src={img.url} alt="" draggable={false} />}
+              </div>
+            )
+          })}
+          {timeline.takeBlocks.map((b) => {
+            const take = project.takes.find((t) => t.id === b.takeId)
+            if (!take || take.images.length < 2) return null
+            const splits = normalizeSplits(take.splits, take.images.length)
+            return splits.map((f, i) => (
+              <div
+                key={`${b.takeId}-split-${i}`}
+                className="tl-split"
+                style={{ left: pct(b.outStart + f * (b.outEnd - b.outStart)) }}
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  dragSplit.current = { takeId: b.takeId, index: i, splits, start: b.outStart, end: b.outEnd }
+                  ;(ref.current as HTMLElement).setPointerCapture(e.pointerId)
+                }}
+                title="Arraste pra mudar o ponto de troca entre as imagens"
+              />
+            ))
+          })}
+          {ticks.map((t) => (
+            <div key={t} className="tl-tick" style={{ left: pct(t) }}>
+              {fmtTime(t)}
+            </div>
+          ))}
+          <div className="tl-playhead" style={{ left: pct(Math.min(playhead, dur)) }} />
         </div>
-      )}
-      {timeline.takeBlocks.map((b, i) => {
-        const take = project.takes.find((t) => t.id === b.takeId)
-        const name = assets[take?.assetId ?? '']?.name ?? ''
-        const isSel = selection.type === 'take' && selection.id === b.takeId
-        return (
-          <div
-            key={b.takeId}
-            className={`tl-block take ${isSel ? 'selected' : ''} ${dropOver === b.takeId ? 'drop-over' : ''}`}
-            style={{ left: pct(b.outStart), width: pct(b.outEnd - b.outStart) }}
-            onPointerDown={() => select({ type: 'take', id: b.takeId })}
-            onDragOver={(e) => {
-              if (e.dataTransfer.types.includes('application/x-kol-image')) {
-                e.preventDefault()
-                setDropOver(b.takeId)
-              }
-            }}
-            onDragLeave={() => setDropOver(null)}
-            onDrop={(e) => onDropOnTake(e, b.takeId)}
-            title={`${name} · ${fmtTime(b.outEnd - b.outStart)}`}
-          >
-            {i + 1} · {name}
-          </div>
-        )
-      })}
-      {timeline.imageSpans.map((s) => {
-        const img = assets[s.assetId]
-        const take = project.takes.find((t) => t.id === s.takeId)
-        const inherited = !take?.images.includes(s.assetId)
-        const isSel = selection.type === 'image' && selection.takeId === s.takeId && selection.assetId === s.assetId
-        return (
-          <div
-            key={`${s.takeId}-${s.index}`}
-            className={`tl-img ${inherited ? 'inherited' : ''} ${isSel ? 'selected' : ''}`}
-            style={{ left: pct(s.outStart), width: pct(s.outEnd - s.outStart) }}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData('application/x-kol-image', JSON.stringify({ assetId: s.assetId, fromTakeId: inherited ? null : s.takeId }))
-              e.dataTransfer.effectAllowed = 'copyMove'
-            }}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              select({ type: 'image', takeId: s.takeId, assetId: s.assetId })
-            }}
-            title={`${img?.name ?? ''}${inherited ? ' (herdada do take anterior)' : ''} · arraste para outro take (Alt = copiar)`}
-          >
-            {img && <img src={img.url} alt="" draggable={false} />}
-          </div>
-        )
-      })}
-      {timeline.takeBlocks.map((b) => {
-        const take = project.takes.find((t) => t.id === b.takeId)
-        if (!take || take.images.length < 2) return null
-        const splits = normalizeSplits(take.splits, take.images.length)
-        return splits.map((f, i) => (
-          <div
-            key={`${b.takeId}-split-${i}`}
-            className="tl-split"
-            style={{ left: pct(b.outStart + f * (b.outEnd - b.outStart)) }}
-            onPointerDown={(e) => {
-              e.stopPropagation()
-              dragSplit.current = { takeId: b.takeId, index: i, splits, start: b.outStart, end: b.outEnd }
-              ;(e.currentTarget.parentElement as HTMLElement).setPointerCapture(e.pointerId)
-            }}
-            title="Arraste pra mudar o ponto de troca"
-          />
-        ))
-      })}
-      {ticks.map((t) => (
-        <div key={t} style={{ position: 'absolute', bottom: 0, left: pct(t), fontSize: 10, color: 'var(--muted)', transform: 'translateX(-50%)' }}>
-          {fmtTime(t)}
-        </div>
-      ))}
-      <div className="tl-playhead" style={{ left: pct(Math.min(playhead, dur)) }} />
-    </div>
+      </div>
+      <div className="tl-foot">
+        <span>Arraste as bordas de um take pra aparar. Arraste imagens pra trocar de posição ou de take. Ctrl + roda do mouse dá zoom.</span>
+        <span className="spacer" />
+        <span>Zoom</span>
+        <input type="range" min={1} max={12} step={0.1} value={zoom} onChange={(e) => setZoom(parseFloat(e.target.value))} style={{ width: 120 }} />
+        <button className="small" onClick={() => setZoom(1)} disabled={zoom === 1}>
+          Ver tudo
+        </button>
+      </div>
+    </>
   )
 }
 

@@ -1,6 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react'
 import { useStore, type Selection } from '../state/store'
-import type { Asset, AssetKind } from '../types'
+import type { Asset, AssetKind, TakeOrder } from '../types'
 import { fromFileList, readDrop } from '../lib/classify'
 import { fmtTime } from '../state/useTimeline'
 
@@ -130,6 +130,7 @@ function TakesZone({ assets }: { assets: Asset[] }) {
   const addFiles = useStore((s) => s.addFiles)
   const project = useStore((s) => s.project)
   const reorder = useStore((s) => s.reorderTakes)
+  const setTakeOrder = useStore((s) => s.setTakeOrder)
   const [over, setOver] = useState(false)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
@@ -156,7 +157,20 @@ function TakesZone({ assets }: { assets: Asset[] }) {
       <div className="dz-head">
         <div>
           <div className="dz-title">Takes</div>
-          <div className="dz-hint">um arquivo por frase · ordem natural · arraste pra reordenar</div>
+          <div className="dz-hint">
+            ordenar por{' '}
+            <select
+              value={project.takeOrder}
+              onChange={(e) => setTakeOrder(e.target.value as TakeOrder)}
+              style={{ width: 'auto', padding: '1px 4px', fontSize: 11 }}
+              title="Critério de ordem dos takes. Arrastar na lista passa a valer a ordem manual."
+            >
+              <option value="date">data de gravação</option>
+              <option value="name">nome</option>
+              <option value="upload">ordem de envio</option>
+            </select>
+            {project.takesManual ? ' · manual' : ''}
+          </div>
         </div>
         <button className="small" onClick={() => input.current?.click()}>
           + Adicionar

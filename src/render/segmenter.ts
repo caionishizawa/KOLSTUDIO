@@ -12,6 +12,7 @@ export type SegModel = 'multiclass' | 'small'
 
 /** Parâmetros de limpeza da máscara */
 const TEMPORAL_ALPHA = 0.6 // peso do quadro atual na média com o anterior (1 = sem suavização)
+const MOTION_DIFF = 0.2 // acima desta diferença entre quadros, não faz média (evita rastro)
 const THRESH_LO = 0.45 // começa a aparecer
 const THRESH_HI = 0.8 // totalmente opaco
 const MIN_COMPONENT_RATIO = 0.25 // manchas menores que 25% da maior área são apagadas
@@ -144,13 +145,17 @@ export class Segmenter {
         cur.set(masks[0].getAsFloat32Array())
       }
 
-      // 1) suavização temporal (tira o tremido entre quadros)
+      // 1) suavização temporal só onde a máscara quase não mudou (tira o tremido sem deixar rastro no movimento)
       if (this.prev && this.prev.length === n) {
         const a = TEMPORAL_ALPHA
         const b = 1 - a
         const p = this.prev
         for (let i = 0; i < n; i++) {
-          const v = a * cur[i] + b * p[i]
+          const c = cur[i]
+          const d = c - p[i]
+          const ad = d < 0 ? -d : d
+          // mudança grande = movimento: usa o quadro atual direto
+          const v = ad > MOTION_DIFF ? c : a * c + b * p[i]
           cur[i] = v
           p[i] = v
         }

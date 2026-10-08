@@ -20,6 +20,10 @@ export interface Asset {
   /** Estado de preparação do arquivo */
   status: 'pending' | 'probing' | 'transcoding' | 'ready' | 'error'
   error?: string
+  /** Data de gravação (ms); cai para a data de modificação do arquivo */
+  createdAt?: number
+  /** Ordem em que o arquivo foi enviado */
+  uploadIndex: number
 }
 
 export interface Interval {
@@ -85,6 +89,8 @@ export interface Take {
 }
 
 export type SilenceIntensity = 'soft' | 'normal' | 'aggressive'
+/** Critério de ordenação dos takes */
+export type TakeOrder = 'date' | 'name' | 'upload'
 
 export interface Project {
   name: string
@@ -99,6 +105,9 @@ export interface Project {
   silence: SilenceIntensity
   faceDefault: FaceSettings
   previewHalf: boolean
+  takeOrder: TakeOrder
+  /** true depois que o usuário reordenou à mão: novos takes entram no fim */
+  takesManual: boolean
 }
 
 export interface OutputSegment {
@@ -175,5 +184,7 @@ export function defaultProject(): Project {
     silence: 'normal',
     faceDefault: defaultFace(),
     previewHalf: false,
+    takeOrder: 'date',
+    takesManual: false,
   }
 }
