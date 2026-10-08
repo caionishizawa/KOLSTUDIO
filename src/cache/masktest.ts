@@ -26,6 +26,7 @@ interface Stats {
   storageBytes: number
   totalMs: number
   msPerFrame: number
+  timing: unknown
   opaque2s: number
   opaque4s: number
   peekHit: boolean
@@ -59,10 +60,16 @@ async function run(file: File) {
   if (force) await deleteMask(key)
   log(`chave ${key}; no cache: ${await hasMask(key)}`)
 
+  const q = new URLSearchParams(location.search)
+  const opts = {
+    fps: Number(q.get('fps')) || 30,
+    inputWidth: q.has('inputWidth') ? Number(q.get('inputWidth')) : undefined,
+    delegate: q.get('delegate') === 'CPU' ? ('CPU' as const) : undefined,
+  }
   const t0 = performance.now()
   let result: MaskJobResult
   try {
-    result = await pre.enqueue(file, key)
+    result = await pre.enqueue(file, key, opts)
   } catch (e) {
     log('falhou: ' + (e instanceof Error ? e.message : String(e)))
     statsEl.textContent = JSON.stringify({ error: String(e) })
@@ -109,6 +116,7 @@ async function run(file: File) {
     storageBytes: await maskStorageUsage(),
     totalMs: Math.round(totalMs),
     msPerFrame: result.cached ? 0 : +(result.elapsedMs / Math.max(1, result.frameCount)).toFixed(1),
+    timing: result.timing ?? null,
     opaque2s: +opaque2s.toFixed(4),
     opaque4s: +opaque4s.toFixed(4),
     peekHit,

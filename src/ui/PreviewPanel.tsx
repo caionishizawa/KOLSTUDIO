@@ -19,6 +19,7 @@ export function PreviewPanel({ timeline }: { timeline: Timeline }) {
   const project = useStore((s) => s.project)
   const assets = useStore((s) => s.assets)
   const analyses = useStore((s) => s.analyses)
+  const masks = useStore((s) => s.masks)
   const playing = useStore((s) => s.playing)
   const setPlaying = useStore((s) => s.setPlaying)
   const playhead = useStore((s) => s.playhead)
@@ -48,8 +49,8 @@ export function PreviewPanel({ timeline }: { timeline: Timeline }) {
 
   // dados
   useEffect(() => {
-    engineRef.current?.setData({ project, assets, analyses, timeline })
-  }, [project, assets, analyses, timeline])
+    engineRef.current?.setData({ project, assets, analyses, timeline, masks })
+  }, [project, assets, analyses, timeline, masks])
 
   // transporte
   useEffect(() => {

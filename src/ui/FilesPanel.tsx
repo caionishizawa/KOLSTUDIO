@@ -249,6 +249,7 @@ function AssetRow(p: RowProps) {
   const updateTake = useStore((s) => s.updateTake)
   const updateProject = useStore((s) => s.updateProject)
   const reassign = useStore((s) => s.reassignImages)
+  const mask = useStore((s) => s.masks[a.id])
 
   const sel: Selection | null =
     a.kind === 'take' && p.takeId
@@ -315,6 +316,12 @@ function AssetRow(p: RowProps) {
               {a.duration != null ? fmtTime(a.duration) : null}
               {a.width ? ` · ${a.width}×${a.height}` : null}
               {a.warning ? <span className="warn"> · ⚠ {a.warning}</span> : null}
+              {mask ? (
+                <span className={mask.status === 'error' ? 'warn' : 'status'}>
+                  {' · recorte '}
+                  {mask.status === 'done' ? 'pronto' : mask.status === 'error' ? 'falhou' : mask.status === 'running' ? `${Math.round(mask.progress * 100)}%` : 'na fila'}
+                </span>
+              ) : null}
             </>
           ) : a.status === 'error' ? (
             <span className="warn">erro: {a.error}</span>

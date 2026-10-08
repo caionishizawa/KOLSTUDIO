@@ -19,7 +19,7 @@ export default function App() {
   const exporterRef = useRef<Exporter | null>(null)
 
   const startExport = useCallback(async () => {
-    const { assets, analyses, project, playing } = useStore.getState()
+    const { assets, analyses, project, playing, masks } = useStore.getState()
     if (timeline.duration <= 0) {
       notify('Nada para exportar: adicione takes.', 'warn')
       return
@@ -29,7 +29,7 @@ export default function App() {
     const picked = await pickSaveHandle(fileName)
     if (picked === 'cancelled') return
     const handle = picked
-    const job = buildJob(project, timeline, assets, analyses, fileName)
+    const job = buildJob(project, timeline, assets, analyses, fileName, masks)
     const exporter = new Exporter()
     exporterRef.current = exporter
     if (exportState.resultUrl) URL.revokeObjectURL(exportState.resultUrl)

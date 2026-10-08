@@ -21,6 +21,8 @@ export interface ExportJob {
   debugCodec?: 'vp9'
   /** Modelo de recorte (padrão multiclasse) */
   segModel?: 'multiclass' | 'small'
+  /** Chaves do cache de máscara (OPFS) por asset, quando já pré-calculadas */
+  maskKeys: Record<string, string>
 }
 
 export type WorkerIn =

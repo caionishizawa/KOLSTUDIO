@@ -8,6 +8,17 @@ import { measureLoudness } from '../lib/loudness'
 import { probeImage, probeMedia, probeWithVideoElement } from '../media/probe'
 import { transcodeToH264 } from '../media/ffmpeg'
 import { buildTimeline, takeKept } from '../lib/timeline'
+import { maskCacheKey, opfsAvailable } from '../cache/maskCache'
+import { MaskPrecomputer } from '../cache/precompute'
+
+export const MASK_MODEL = 'mediapipe'
+
+export interface MaskInfo {
+  key: string
+  status: 'queued' | 'running' | 'done' | 'error'
+  progress: number
+  error?: string
+}
 
 export type Selection =
   | { type: 'project' }
@@ -46,6 +57,8 @@ interface State {
   notices: Notice[]
   exportState: ExportState
   segmenterInfo: string
+  /** Estado do pré-cálculo da máscara de recorte por asset (takes e reação) */
+  masks: Record<string, MaskInfo>
 
   addFiles: (files: DroppedFile[], forcedKind?: AssetKind) => Promise<void>
   removeAsset: (id: string) => void
@@ -74,6 +87,43 @@ let idCounter = 0
 let uploadCounter = 0
 const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${(idCounter++).toString(36)}`
 
+const keyToAsset = new Map<string, string>()
+let precomputer: MaskPrecomputer | null = null
+function getPrecomputer(): MaskPrecomputer {
+  if (!precomputer) {
+    const patch = (key: string, p: Partial<MaskInfo>) => {
+      const id = keyToAsset.get(key)
+      if (!id) return
+      useStore.setState((s) => (s.masks[id] ? { masks: { ...s.masks, [id]: { ...s.masks[id], ...p } } } : {}))
+    }
+    precomputer = new MaskPrecomputer({
+      onStatus: (key, status) => {
+        if (status) patch(key, { status })
+      },
+      onProgress: (key, frame, total) => patch(key, { status: 'running', progress: total ? frame / total : 0 }),
+      onDone: (r) => patch(r.key, { status: 'done', progress: 1 }),
+      onError: (key, message) => {
+        patch(key, { status: 'error', error: message })
+        useStore.getState().notify('Recorte em segundo plano falhou: ' + message, 'warn')
+      },
+    })
+  }
+  return precomputer
+}
+
+/** Agenda o pré-cálculo da máscara de recorte de um take ou da reação. */
+function ensureMask(asset: Asset | undefined) {
+  if (!asset || asset.status !== 'ready' || asset.type !== 'video') return
+  if (asset.kind !== 'take' && asset.kind !== 'reaction') return
+  if (!opfsAvailable()) return
+  const key = maskCacheKey(asset.file, MASK_MODEL)
+  keyToAsset.set(key, asset.id)
+  const cur = useStore.getState().masks[asset.id]
+  if (cur && cur.key === key && cur.status !== 'error') return
+  useStore.setState((s) => ({ masks: { ...s.masks, [asset.id]: { key, status: 'queued', progress: 0 } } }))
+  getPrecomputer().enqueue(asset.file, key, { fps: 30, maskWidth: 192 })
+}
+
 export const useStore = create<State>((set, get) => ({
   assets: {},
   project: defaultProject(),
@@ -94,6 +144,7 @@ export const useStore = create<State>((set, get) => ({
     resultName: null,
   },
   segmenterInfo: '',
+  masks: {},
 
   notify: (text, level = 'info') => {
     const id = ++idCounter
@@ -205,9 +256,13 @@ export const useStore = create<State>((set, get) => ({
     const a = get().assets[id]
     if (!a) return
     URL.revokeObjectURL(a.url)
+    const m = get().masks[id]
+    if (m && m.status !== 'done') precomputer?.cancel(m.key)
     set((s) => {
       const assets = { ...s.assets }
       delete assets[id]
+      const masks = { ...s.masks }
+      delete masks[id]
       const analyses = { ...s.analyses }
       delete analyses[id]
       const p = { ...s.project }
@@ -217,7 +272,7 @@ export const useStore = create<State>((set, get) => ({
       p.takes = p.takes
         .filter((t) => t.assetId !== id)
         .map((t) => (t.images.includes(id) ? { ...t, images: t.images.filter((i) => i !== id), splits: [] } : t))
-      return { assets, analyses, project: p, selection: { type: 'project' } }
+      return { assets, analyses, masks, project: p, selection: { type: 'project' } }
     })
     get().reassignImages()
   },
@@ -237,6 +292,7 @@ export const useStore = create<State>((set, get) => ({
       return { project: p, assets: { ...s.assets, [id]: { ...s.assets[id], kind } } }
     })
     attachRole(get, set, get().assets[id])
+    ensureMask(get().assets[id])
     get().reassignImages()
   },
 
@@ -330,6 +386,7 @@ async function prepareAsset(get: Get, set: Set, id: string) {
     }
     const ready = get().assets[id]
     attachRole(get, set, ready)
+    ensureMask(ready)
     // análise de áudio (takes e clipe)
     if (ready.type === 'video' && (ready.kind === 'take' || ready.kind === 'clip') && ready.hasAudio) {
       const buf = await decodeAudioFile(ready.file)

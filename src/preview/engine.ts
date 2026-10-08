@@ -5,12 +5,15 @@ import { dbToGain, measureLoudness } from '../lib/loudness'
 import { VOICE_TARGET_LUFS } from '../lib/silence'
 import { createScratch, drawFrame, type FrameLayout, type FrameParams, type FrameSources, type Scratch } from '../render/compositor'
 import { Segmenter } from '../render/segmenter'
+import { MaskReader } from '../cache/maskCache'
+import type { MaskInfo } from '../state/store'
 
 export interface EngineData {
   project: Project
   assets: Record<string, Asset>
   analyses: Record<string, TakeAnalysis>
   timeline: Timeline
+  masks: Record<string, MaskInfo>
 }
 
 const MASTER_DB = 2 // voz em -16 LUFS + 2 dB ≈ -14 LUFS no mix
@@ -34,6 +37,8 @@ export class PreviewEngine {
   private musicLoudness = -16
   private segmenter: Segmenter | null = null
   private segmenterFailed = false
+  private readers = new Map<string, MaskReader>()
+  private readersLoading = new Set<string>()
   private time = 0
   private playing = false
   private segIndex = -1
@@ -88,6 +93,8 @@ export class PreviewEngine {
     for (const b of this.images.values()) b.close()
     this.images.clear()
     this.segmenter?.close()
+    for (const r of this.readers.values()) r.close()
+    this.readers.clear()
     this.audioCtx?.close()
   }
 
@@ -418,7 +425,13 @@ export class PreviewEngine {
       if (project.reactionId && d.assets[project.reactionId]) {
         const ra = d.assets[project.reactionId]
         const rv = this.ensureVideo(ra, true)
-        if (rv.readyState >= 2) sources.reaction = { source: rv, w: rv.videoWidth, h: rv.videoHeight, mask: this.maskFor(rv, now) }
+        if (rv.readyState >= 2)
+          sources.reaction = {
+            source: rv,
+            w: rv.videoWidth,
+            h: rv.videoHeight,
+            mask: this.maskFor(rv, now, ra.id, this.time - seg.outStart),
+          }
       }
     } else if (seg?.kind === 'take') {
       params.kind = 'take'
@@ -432,7 +445,7 @@ export class PreviewEngine {
             source: v,
             w: v.videoWidth,
             h: v.videoHeight,
-            mask: take?.cutout === false ? null : this.maskFor(v, now),
+            mask: take?.cutout === false ? null : this.maskFor(v, now, asset.id, loc.srcTime),
           }
       }
       if (loc.image) {
@@ -451,7 +464,28 @@ export class PreviewEngine {
     ctx.restore()
   }
 
-  private maskFor(v: HTMLVideoElement, now: number): OffscreenCanvas | null {
+  /** Máscara do cache (pré-calculada) quando existe; senão, segmentação ao vivo. */
+  private maskFor(v: HTMLVideoElement, now: number, assetId: string, srcTime: number): OffscreenCanvas | null {
+    const info = this.data?.masks[assetId]
+    if (info && info.status === 'done') {
+      const reader = this.readers.get(info.key)
+      if (reader) {
+        const c = reader.peekCanvas(srcTime)
+        reader.prefetch(srcTime + 1 / 30)
+        if (c) return c
+        // quadro ainda não lido: tenta de novo no próximo frame
+        this.dirty = true
+      } else if (!this.readersLoading.has(info.key)) {
+        this.readersLoading.add(info.key)
+        MaskReader.open(info.key)
+          .then((r) => {
+            if (r) this.readers.set(info.key, r)
+            this.dirty = true
+          })
+          .catch(() => {})
+          .finally(() => this.readersLoading.delete(info.key))
+      }
+    }
     if (!this.segmenter || this.segmenterFailed) return null
     try {
       return this.segmenter.segment(v, v.videoWidth, v.videoHeight, now)

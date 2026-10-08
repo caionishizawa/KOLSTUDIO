@@ -20,6 +20,7 @@ import type { ExportJob, WorkerIn, WorkerOut } from './types'
 import { CANVAS_H, CANVAS_W, FPS, defaultTransform } from '../types'
 import { createScratch, drawFrame, type FrameParams, type FrameSources } from '../render/compositor'
 import { Segmenter } from '../render/segmenter'
+import { MaskReader } from '../cache/maskCache'
 import { SR, applyGain, decodeRange, fadeEdges, limit, mixInto, stereo, timeStretch, type Stereo } from './audio'
 import { measureLoudnessPlanar } from '../lib/loudness'
 import { VOICE_TARGET_LUFS } from '../lib/silence'
@@ -136,23 +137,45 @@ async function runExport(job: ExportJob, handle: FileSystemFileHandle | null) {
   const canvas = new OffscreenCanvas(CANVAS_W, CANVAS_H)
   const ctx = canvas.getContext('2d')!
   const scratch = createScratch()
-  let segmenter: Segmenter | null = null
-  const needsCutout = timeline.segments.some((s) => s.kind === 'react' || project.takes.find((t) => t.id === s.takeId)?.cutout !== false)
-  if (needsCutout) {
+  // máscaras pré-calculadas (cache OPFS); segmentação ao vivo só para o que faltar
+  const readers = new Map<string, MaskReader>()
+  for (const [assetId, key] of Object.entries(job.maskKeys ?? {})) {
     try {
-      segmenter = await Segmenter.create('GPU', job.segModel ?? 'multiclass')
-      post({ type: 'info', text: `Recorte na exportação: MediaPipe ${segmenter.info.model === 'multiclass' ? 'multiclasse' : 'simples'} (${segmenter.info.delegate})` })
-    } catch (e) {
-      post({ type: 'info', text: 'Recorte indisponível no worker, exportando sem recorte: ' + (e instanceof Error ? e.message : String(e)) })
+      const r = await MaskReader.open(key)
+      if (r) readers.set(assetId, r)
+    } catch {
+      /* sem cache: segmenta ao vivo */
     }
   }
+  let segmenter = null as Segmenter | null
+  let segmenterFailed = false
+  const liveMask = async (assetId: string, source: OffscreenCanvas, w: number, h: number, srcTime: number, tsMs: number) => {
+    const reader = readers.get(assetId)
+    if (reader) {
+      const c = await reader.canvasAt(srcTime)
+      if (c) return c
+    }
+    if (segmenterFailed) return null
+    if (!segmenter) {
+      try {
+        segmenter = await Segmenter.create('GPU', job.segModel ?? 'multiclass')
+        post({ type: 'info', text: `Recorte ao vivo na exportação: MediaPipe ${segmenter.info.model === 'multiclass' ? 'multiclasse' : 'simples'} (${segmenter.info.delegate})` })
+      } catch (e) {
+        segmenterFailed = true
+        post({ type: 'info', text: 'Recorte indisponível no worker, exportando sem recorte: ' + (e instanceof Error ? e.message : String(e)) })
+        return null
+      }
+    }
+    return segmenter.segment(source, w, h, tsMs)
+  }
+  if (readers.size > 0) post({ type: 'info', text: `Usando ${readers.size} máscara(s) pré-calculada(s) do cache.` })
 
-  const readers = new Map<string, VideoReader>()
+  const videoReaders = new Map<string, VideoReader>()
   const getReader = async (assetId: string) => {
-    let r = readers.get(assetId)
+    let r = videoReaders.get(assetId)
     if (!r) {
       r = await openVideo(assets[assetId].file)
-      readers.set(assetId, r)
+      videoReaders.set(assetId, r)
     }
     return r
   }
@@ -236,7 +259,7 @@ async function runExport(job: ExportJob, handle: FileSystemFileHandle | null) {
               source: reaction.canvas,
               w: reaction.w,
               h: reaction.h,
-              mask: segmenter ? segmenter.segment(reaction.canvas, reaction.w, reaction.h, tsMs) : null,
+              mask: reactionAsset ? await liveMask(reactionAsset.id, reaction.canvas, reaction.w, reaction.h, t - seg.outStart, tsMs) : null,
             }
           }
         } else {
@@ -244,7 +267,7 @@ async function runExport(job: ExportJob, handle: FileSystemFileHandle | null) {
             source: main.canvas,
             w: main.w,
             h: main.h,
-            mask: segmenter && take?.cutout !== false ? segmenter.segment(main.canvas, main.w, main.h, tsMs) : null,
+            mask: take?.cutout !== false ? await liveMask(seg.assetId, main.canvas, main.w, main.h, srcTimes[k], tsMs) : null,
           }
           const span = spans.find((s) => t >= s.outStart && t < s.outEnd) ?? spans[spans.length - 1]
           if (span && assets[span.assetId]?.type === 'image') {
@@ -281,8 +304,9 @@ async function runExport(job: ExportJob, handle: FileSystemFileHandle | null) {
       post({ type: 'done', buffer: buf }, [buf])
     }
   } finally {
-    for (const r of readers.values()) r.input.dispose()
+    for (const r of videoReaders.values()) r.input.dispose()
     for (const b of images.values()) b.close()
+    for (const r of readers.values()) r.close()
     segmenter?.close()
     currentOutput = null
   }

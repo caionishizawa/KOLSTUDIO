@@ -38,12 +38,13 @@ self.onmessage = async (ev: MessageEvent<PrecomputeIn>) => {
   }
 }
 
-async function getSegmenter(model: PrecomputeStart['model']): Promise<MaskSegmenter> {
-  if (segmenter && segmenterModel === model) return segmenter
+async function getSegmenter(model: PrecomputeStart['model'], delegate: 'GPU' | 'CPU'): Promise<MaskSegmenter> {
+  const id = `${model}/${delegate}`
+  if (segmenter && segmenterModel === id) return segmenter
   segmenter?.close()
   segmenter = null
-  segmenter = await createSegmenter(model)
-  segmenterModel = model
+  segmenter = await createSegmenter(model, { delegate })
+  segmenterModel = id
   return segmenter
 }
 
@@ -72,7 +73,7 @@ async function run(msg: PrecomputeStart) {
 
     const maskH = maskHeightFor(dispW, dispH, maskWidth)
     const scratch = createMaskScratch(maskWidth, maskH)
-    const seg = await getSegmenter(msg.model)
+    const seg = await getSegmenter(msg.model, msg.delegate ?? 'GPU')
     seg.reset()
     if (cancelled) throw new Error('cancelado')
 
@@ -86,19 +87,25 @@ async function run(msg: PrecomputeStart) {
     let frame = 0
     let last: Uint8Array | null = null
     let haveFrame = false
+    const timing = { decodeMs: 0, segmentMs: 0, writeMs: 0 }
     for (let f = 0; f < total; f++) {
       if (cancelled) throw new Error('cancelado')
+      let t = performance.now()
       const sample = (await iter.next()).value as VideoSample | null | undefined
       if (sample) {
         sample.draw(ctx, 0, 0, inW, inH)
         sample.close()
         haveFrame = true
       }
+      timing.decodeMs += performance.now() - t
       let bytes: Uint8Array | null = null
       if (haveFrame) {
+        t = performance.now()
         const mask = await seg.segment(canvas, inW, inH, (f * 1000) / fps)
         if (mask) bytes = maskCanvasToBytes(mask, maskWidth, maskH, scratch)
+        timing.segmentMs += performance.now() - t
       }
+      t = performance.now()
       if (!bytes) {
         // sem máscara neste quadro: repete o anterior (ou transparente no começo)
         if (!last) last = new Uint8Array(maskWidth * maskH)
@@ -107,6 +114,7 @@ async function run(msg: PrecomputeStart) {
         last = bytes
       }
       await writer.append(bytes)
+      timing.writeMs += performance.now() - t
       frame++
       if (frame % PROGRESS_EVERY === 0) post({ type: 'progress', jobId: msg.jobId, frame, total })
     }
@@ -120,6 +128,7 @@ async function run(msg: PrecomputeStart) {
       width: header.width,
       height: header.height,
       elapsedMs: performance.now() - t0,
+      timing,
     })
   } finally {
     if (writer) await writer.abort()

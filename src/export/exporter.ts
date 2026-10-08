@@ -1,4 +1,5 @@
 import type { Asset, Project, TakeAnalysis, Timeline } from '../types'
+import type { MaskInfo } from '../state/store'
 import type { ExportAsset, ExportJob, WorkerIn, WorkerOut } from './types'
 
 export interface ExportCallbacks {
@@ -20,6 +21,7 @@ export function buildJob(
   assets: Record<string, Asset>,
   analyses: Record<string, TakeAnalysis>,
   fileName: string,
+  masks: Record<string, MaskInfo> = {},
 ): ExportJob {
   const used = new Set<string>()
   for (const s of timeline.segments) used.add(s.assetId)
@@ -36,7 +38,9 @@ export function buildJob(
   for (const [id, an] of Object.entries(analyses)) gains[id] = an.gain
   const debugCodec = new URLSearchParams(location.search).get('codec') === 'vp9' ? 'vp9' : undefined
   const segModel = new URLSearchParams(location.search).get('model') === 'small' ? 'small' : 'multiclass'
-  return { project, timeline, assets: exAssets, gains, fileName, debugCodec, segModel }
+  const maskKeys: Record<string, string> = {}
+  for (const [id, m] of Object.entries(masks)) if (m.status === 'done' && used.has(id)) maskKeys[id] = m.key
+  return { project, timeline, assets: exAssets, gains, fileName, debugCodec, segModel, maskKeys }
 }
 
 export class Exporter {

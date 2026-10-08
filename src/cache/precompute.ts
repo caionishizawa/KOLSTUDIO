@@ -3,9 +3,9 @@
  * worker (reaproveitado entre jobs para não recarregar o modelo).
  */
 import { DEFAULT_MASK_WIDTH, hasMask } from './maskCache'
-import type { MaskModel, PrecomputeOut } from './protocol'
+import type { MaskModel, PrecomputeOut, StageTiming } from './protocol'
 
-export type { MaskModel } from './protocol'
+export type { MaskModel, StageTiming } from './protocol'
 
 export type MaskJobStatus = 'queued' | 'running' | 'done' | 'error'
 
@@ -15,6 +15,8 @@ export interface MaskJobOptions {
   maskWidth?: number
   /** Largura máxima do quadro desenhado antes de segmentar (0 = resolução de exibição) */
   inputWidth?: number
+  /** Delegate do MediaPipe (padrão GPU) */
+  delegate?: 'GPU' | 'CPU'
   /** Recalcula mesmo que a chave já exista */
   force?: boolean
 }
@@ -27,6 +29,8 @@ export interface MaskJobResult {
   elapsedMs: number
   /** true quando a máscara já existia e o job foi pulado */
   cached: boolean
+  /** Tempo por etapa (só quando calculado agora) */
+  timing?: StageTiming
 }
 
 export interface MaskPrecomputerCallbacks {
@@ -41,7 +45,7 @@ interface Job {
   id: number
   key: string
   file: File
-  opts: Required<Pick<MaskJobOptions, 'model' | 'fps' | 'maskWidth'>> & { inputWidth?: number; force: boolean }
+  opts: Required<Pick<MaskJobOptions, 'model' | 'fps' | 'maskWidth'>> & { inputWidth?: number; delegate?: 'GPU' | 'CPU'; force: boolean }
   resolve: (r: MaskJobResult) => void
   reject: (e: Error) => void
   progress: { frame: number; total: number }
@@ -111,6 +115,7 @@ export class MaskPrecomputer {
           fps: opts.fps ?? 30,
           maskWidth: opts.maskWidth ?? DEFAULT_MASK_WIDTH,
           inputWidth: opts.inputWidth,
+          delegate: opts.delegate,
           force: !!opts.force,
         },
         resolve,
@@ -184,6 +189,7 @@ export class MaskPrecomputer {
       fps: job.opts.fps,
       maskWidth: job.opts.maskWidth,
       inputWidth: job.opts.inputWidth,
+      delegate: job.opts.delegate,
     })
   }
 
@@ -196,7 +202,7 @@ export class MaskPrecomputer {
       return
     }
     if (msg.type === 'done') {
-      const r: MaskJobResult = { key: msg.key, frameCount: msg.frameCount, width: msg.width, height: msg.height, elapsedMs: msg.elapsedMs, cached: false }
+      const r: MaskJobResult = { key: msg.key, frameCount: msg.frameCount, width: msg.width, height: msg.height, elapsedMs: msg.elapsedMs, cached: false, timing: msg.timing }
       this.running = null
       this.setStatus(job.key, 'done')
       job.resolve(r)

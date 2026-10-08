@@ -3,7 +3,7 @@
  *
  * Parâmetros de URL (todos opcionais): ?auto=1 (roda assim que um arquivo for escolhido)
  *   &mode=main|worker &backend=webgpu|wasm &precision=fp16|fp32 &width=256 &frames=40 &fps=10 &mp=0
- *   &threads=N (wasm) &mpd=CPU (delegate do MediaPipe)
+ *   &threads=N (wasm) &mpd=CPU (delegate do MediaPipe) &gpustate=0 (WebGPU: estados na CPU)
  * Para automação (Playwright): `window.__bench.done` fica true ao terminar, `window.__bench.stats`
  * tem o JSON e `window.__bench.pngs()` devolve data URLs {src, mp, rvm} do último quadro.
  */
@@ -56,7 +56,7 @@ interface Stats {
   error?: string
 }
 
-const bench = { done: false, running: false, stats: null as Stats | null, pngs: exportDataUrls }
+const bench = { done: false, running: false, stats: null as Stats | null, pngs: exportDataUrls, firstPngs: null as Record<string, string> | null }
 ;(window as unknown as { __bench: typeof bench }).__bench = bench
 
 // cortes do último quadro com alfa (para exportar PNG)
@@ -225,6 +225,7 @@ async function run() {
       rvmPrecision: (precisionSel.value || undefined) as RvmPrecision | undefined,
       rvmInputWidth: Number(widthInput.value) || 256,
       rvmThreads: params.get('threads') ? Number(params.get('threads')) : undefined,
+      rvmGpuStates: params.get('gpustate') === '0' ? false : undefined,
       mpDelegate: params.get('mpd') === 'CPU' ? 'CPU' : 'GPU',
       mpModel: 'multiclass',
       runMediaPipe: mpCheck.checked,
@@ -270,6 +271,8 @@ async function run() {
       sc.getContext('2d')!.drawImage(video, 0, 0)
       r.mp?.close()
       r.rvm?.close()
+      // guarda o 1º quadro já renderizado (útil se o processo de GPU cair no meio do teste)
+      if (i === 0) bench.firstPngs = await exportDataUrls()
       statsPre.textContent = `quadro ${i + 1}/${nFrames}  MP ${r.mpMs.toFixed(1)} ms  RVM ${r.rvmMs.toFixed(1)} ms`
     }
   } catch (e) {

@@ -15,11 +15,16 @@ export interface MaskSegmenter {
   close(): void
 }
 
+export interface SegmenterOptions {
+  /** Delegate preferido do MediaPipe (padrão GPU, com fallback para CPU) */
+  delegate?: 'GPU' | 'CPU'
+}
+
 /** Cria o segmentador pelo nome do modelo. Para plugar outro (ex.: RVM), acrescente um case. */
-export async function createSegmenter(model: MaskModel): Promise<MaskSegmenter> {
+export async function createSegmenter(model: MaskModel, opts: SegmenterOptions = {}): Promise<MaskSegmenter> {
   switch (model) {
     case 'mediapipe': {
-      const seg = await Segmenter.create('GPU', 'multiclass')
+      const seg = await Segmenter.create(opts.delegate ?? 'GPU', 'multiclass')
       return {
         label: `mediapipe ${seg.info.model}/${seg.info.delegate}`,
         reset: () => seg.reset(),

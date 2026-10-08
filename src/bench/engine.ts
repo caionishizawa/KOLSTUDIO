@@ -10,6 +10,7 @@ export interface BenchInitOptions {
   rvmPrecision?: RvmPrecision
   rvmInputWidth: number
   rvmThreads?: number
+  rvmGpuStates?: boolean
   mpDelegate: 'GPU' | 'CPU'
   mpModel: SegModel
   /** false = só RVM (útil quando o MediaPipe não inicializa no ambiente) */
@@ -45,7 +46,7 @@ export class BenchEngine {
         console.warn('MediaPipe indisponível no bench', e)
       }
     }
-    this.rvm = await RvmSegmenter.create({ backend: opts.rvmBackend, precision: opts.rvmPrecision, inputWidth: opts.rvmInputWidth, threads: opts.rvmThreads })
+    this.rvm = await RvmSegmenter.create({ backend: opts.rvmBackend, precision: opts.rvmPrecision, inputWidth: opts.rvmInputWidth, threads: opts.rvmThreads, gpuStates: opts.rvmGpuStates })
     return {
       mediapipe: this.mp ? `MediaPipe ${this.mp.info.model} (${this.mp.info.delegate})` : null,
       rvm: this.rvm.info.label,
