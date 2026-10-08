@@ -39,3 +39,4 @@ samples/**/*.png
 samples/**/*.jpg
 samples/**/*.jpeg
 samples/**/*.webp
+public/ort/

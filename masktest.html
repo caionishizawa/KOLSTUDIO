@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Teste do cache de máscaras</title>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #202020; color: #eee; margin: 16px; }
+      canvas { background: #444; image-rendering: pixelated; margin-right: 8px; border: 1px solid #666; }
+      pre { background: #111; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+      #progress { margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h3>Cache de máscaras (OPFS)</h3>
+    <input id="file" type="file" accept="video/*" />
+    <label><input id="force" type="checkbox" /> forçar recálculo</label>
+    <div id="progress">aguardando arquivo…</div>
+    <div>
+      <canvas id="c2" width="192" height="341"></canvas>
+      <canvas id="c4" width="192" height="341"></canvas>
+    </div>
+    <pre id="stats"></pre>
+    <script type="module" src="/src/cache/masktest.ts"></script>
+  </body>
+</html>

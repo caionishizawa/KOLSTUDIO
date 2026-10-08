@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bench recorte: MediaPipe vs RVM</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+      .views { display: flex; gap: 12px; align-items: flex-start; }
+      .views figure { margin: 0; }
+      .views figcaption { font-size: 12px; opacity: 0.8; margin-bottom: 4px; }
+      canvas { background: #00b140; width: 270px; height: 480px; display: block; }
+      pre { background: #000; padding: 8px; font-size: 12px; max-height: 50vh; overflow: auto; }
+      button, select, input { font: inherit; }
+    </style>
+  </head>
+  <body>
+    <h3>MediaPipe (atual) vs Robust Video Matting (ONNX local)</h3>
+    <div class="row">
+      <input type="file" id="file" accept="video/*" />
+      <label>modo <select id="mode"><option value="main">thread principal</option><option value="worker">worker</option></select></label>
+      <label>RVM backend <select id="backend"><option value="webgpu">webgpu (fallback wasm)</option><option value="wasm">wasm</option></select></label>
+      <label>precisão <select id="precision"><option value="">auto</option><option value="fp16">fp16</option><option value="fp32">fp32</option></select></label>
+      <label>largura <input type="number" id="width" value="256" min="128" max="512" step="16" style="width:5em" /></label>
+      <label>quadros <input type="number" id="frames" value="40" min="1" max="600" style="width:5em" /></label>
+      <label>fps amostra <input type="number" id="fps" value="10" min="1" max="60" style="width:4em" /></label>
+      <label><input type="checkbox" id="mp" checked /> MediaPipe</label>
+      <button id="start">Rodar</button>
+      <button id="export" disabled>Exportar PNGs</button>
+    </div>
+    <div class="views">
+      <figure><figcaption>fonte</figcaption><canvas id="src" width="270" height="480"></canvas></figure>
+      <figure><figcaption id="capMp">MediaPipe</figcaption><canvas id="cmp" width="270" height="480"></canvas></figure>
+      <figure><figcaption id="capRvm">RVM</figcaption><canvas id="crvm" width="270" height="480"></canvas></figure>
+    </div>
+    <pre id="stats">aguardando vídeo…</pre>
+    <script type="module" src="/src/bench/main.ts"></script>
+  </body>
+</html>
