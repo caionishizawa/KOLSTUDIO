@@ -96,8 +96,9 @@ function ProjectProps({ project, timeline }: { project: Project; timeline: Timel
         ))}
       </div>
       <p className="note">
-        Remove silêncio acima de {Math.round(SILENCE_PRESETS[project.silence].minSilence * 1000)} ms, margem de{' '}
-        {Math.round(SILENCE_PRESETS[project.silence].margin * 1000)} ms antes e depois da fala. Só nos takes.
+        {project.silence === 'off'
+          ? 'Desligado: o áudio fica inteiro, do jeito que chegou. Corte à mão com Q / W ou arrastando as bordas na linha do tempo.'
+          : `Remove silêncio acima de ${Math.round(SILENCE_PRESETS[project.silence].minSilence * 1000)} ms, margem de ${Math.round(SILENCE_PRESETS[project.silence].margin * 1000)} ms antes e depois da fala. Só nos takes.`}
       </p>
 
       <TitleFields />

@@ -7,7 +7,7 @@ import { analyzeTake, decodeAudioFile } from '../lib/silence'
 import { measureLoudness } from '../lib/loudness'
 import { probeImage, probeMedia, probeWithVideoElement } from '../media/probe'
 import { transcodeToH264 } from '../media/ffmpeg'
-import { buildTimeline, takeKept } from '../lib/timeline'
+import { buildTimeline, locate, takeKept } from '../lib/timeline'
 import { maskCacheKey, opfsAvailable } from '../cache/maskCache'
 import { MaskPrecomputer } from '../cache/precompute'
 
@@ -76,6 +76,10 @@ interface State {
   addManualCut: (takeId: string, iv: Interval) => void
   restoreCut: (takeId: string, iv: Interval) => void
   reassignImages: () => void
+  /** Q / W do CapCut: apaga o que está antes (back) ou depois (forward) do cursor no take sob o cursor */
+  cutAtPlayhead: (dir: 'back' | 'forward') => boolean
+  /** Velocidade igual pra todos os takes (zera ajustes individuais) */
+  setSpeedAll: (speed: number) => void
   select: (s: Selection) => void
   setPlayhead: (t: number) => void
   setPlaying: (p: boolean) => void
@@ -255,6 +259,37 @@ export const useStore = create<State>((set, get) => ({
       manualKeeps: [...take.manualKeeps, iv],
       manualCuts: take.manualCuts.filter((c) => c.end <= iv.start || c.start >= iv.end),
     })),
+
+  setSpeedAll: (speed) =>
+    set((s) => ({ project: { ...s.project, speed, takes: s.project.takes.map((t) => (t.speed == null ? t : { ...t, speed: null })) } })),
+
+  cutAtPlayhead: (dir) => {
+    const st = get()
+    const tl = computeTimeline(st)
+    const loc = locate(tl, st.playhead)
+    const seg = loc.segment
+    if (!seg || seg.kind !== 'take' || !seg.takeId) return false
+    const take = st.project.takes.find((t) => t.id === seg.takeId)
+    const dur = st.assets[seg.assetId]?.duration ?? 0
+    if (!take || dur <= 0) return false
+    const src = loc.srcTime
+    const MIN = 0.1
+    if (dir === 'back') {
+      if (src <= take.trimStart + 0.01) return false
+      const maxStart = dur - take.trimEnd - MIN
+      st.updateTake(take.id, { trimStart: Math.min(src, maxStart) })
+      // mantém o cursor no mesmo ponto do vídeo (que agora é o começo do take)
+      const block = tl.takeBlocks.find((b) => b.takeId === take.id)
+      if (block) st.setPlayhead(block.outStart + 0.001)
+    } else {
+      const newEnd = dur - src
+      if (newEnd <= take.trimEnd + 0.01) return false
+      const maxEnd = dur - take.trimStart - MIN
+      st.updateTake(take.id, { trimEnd: Math.min(newEnd, maxEnd) })
+    }
+    st.select({ type: 'take', id: take.id })
+    return true
+  },
 
   reassignImages: () => {
     const { project, assets, analyses } = get()

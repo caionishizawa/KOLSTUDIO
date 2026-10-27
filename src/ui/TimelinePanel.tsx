@@ -33,6 +33,7 @@ function OutputRuler({ timeline }: { timeline: Timeline }) {
   const select = useStore((s) => s.select)
   const moveImage = useStore((s) => s.moveImage)
   const updateTake = useStore((s) => s.updateTake)
+  const cutAtPlayhead = useStore((s) => s.cutAtPlayhead)
   const [dropOver, setDropOver] = useState<string | null>(null)
   const [imgDrop, setImgDrop] = useState<{ takeId: string; index: number } | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -280,7 +281,13 @@ function OutputRuler({ timeline }: { timeline: Timeline }) {
         </div>
       </div>
       <div className="tl-foot">
-        <span>Arraste as bordas de um take pra aparar. Arraste imagens pra trocar de posição ou de take. Ctrl + roda do mouse dá zoom.</span>
+        <button className="small" onClick={() => cutAtPlayhead('back')} title="Apaga do começo do take até o cursor (tecla Q)">
+          ◀ Cortar pra trás (Q)
+        </button>
+        <button className="small" onClick={() => cutAtPlayhead('forward')} title="Apaga do cursor até o fim do take (tecla W)">
+          Cortar pra frente (W) ▶
+        </button>
+        <span>Clique na faixa pra posicionar o cursor. Arraste as bordas de um take pra aparar. Arraste imagens pra trocar de posição ou de take. Ctrl + roda dá zoom.</span>
         <span className="spacer" />
         <span>Zoom</span>
         <input type="range" min={1} max={12} step={0.1} value={zoom} onChange={(e) => setZoom(parseFloat(e.target.value))} style={{ width: 120 }} />

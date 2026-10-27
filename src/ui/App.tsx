@@ -10,6 +10,9 @@ import { Exporter, buildJob, exportFileName, pickSaveHandle } from '../export/ex
 export default function App() {
   const project = useStore((s) => s.project)
   const updateProject = useStore((s) => s.updateProject)
+  const select = useStore((s) => s.select)
+  const setSpeedAll = useStore((s) => s.setSpeedAll)
+  const allSameSpeed = project.takes.every((t) => t.speed == null)
   const notices = useStore((s) => s.notices)
   const dismiss = useStore((s) => s.dismissNotice)
   const exportState = useStore((s) => s.exportState)
@@ -85,6 +88,12 @@ export default function App() {
         e.preventDefault()
         const s = useStore.getState()
         s.setPlaying(!s.playing)
+      } else if (e.code === 'KeyQ' || e.code === 'KeyW') {
+        if (e.ctrlKey || e.metaKey || e.altKey) return
+        e.preventDefault()
+        const s = useStore.getState()
+        const ok = s.cutAtPlayhead(e.code === 'KeyQ' ? 'back' : 'forward')
+        if (!ok) s.notify('Coloque o cursor dentro de um take pra cortar (Q = apaga o que vem antes, W = o que vem depois).', 'info')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -103,6 +112,17 @@ export default function App() {
           onChange={(e) => updateProject({ name: e.target.value })}
           placeholder="Nome do projeto"
         />
+        <button onClick={() => select({ type: 'project' })} title="Voltar à tela principal: título, avisos, música, velocidade">
+          ⌂ Projeto
+        </button>
+        <div className="speed-all" title="Velocidade de todos os takes (zera ajustes individuais)">
+          <span>Velocidade</span>
+          {[1, 1.1, 1.2, 1.25, 1.5].map((v) => (
+            <button key={v} className={`small ${Math.abs(project.speed - v) < 0.001 && allSameSpeed ? 'active' : ''}`} onClick={() => setSpeedAll(v)}>
+              {v}x
+            </button>
+          ))}
+        </div>
         <div className="spacer" />
         {ex.running ? (
           <div className="export-box">

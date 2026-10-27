@@ -119,7 +119,7 @@ export function keptIntervals(
   const lo = Math.max(0, trimStart)
   const hi = Math.max(lo, duration - Math.max(0, trimEnd))
   let kept: Interval[]
-  if (!analysis || analysis.speech.length === 0) {
+  if (intensity === 'off' || !analysis || analysis.speech.length === 0) {
     kept = [{ start: lo, end: hi }]
   } else {
     const { minSilence, margin } = SILENCE_PRESETS[intensity]

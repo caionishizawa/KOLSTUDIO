@@ -124,6 +124,16 @@ input[type='checkbox'] {
 .header .spacer {
   flex: 1;
 }
+.header .speed-all {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.header .speed-all span {
+  margin-right: 4px;
+}
 .header .project-name {
   width: 220px;
 }

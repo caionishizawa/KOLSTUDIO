@@ -88,7 +88,7 @@ export interface Take {
   cutout: boolean
 }
 
-export type SilenceIntensity = 'soft' | 'normal' | 'aggressive'
+export type SilenceIntensity = 'off' | 'soft' | 'normal' | 'aggressive'
 /** Critério de ordenação dos takes */
 export type TakeOrder = 'date' | 'name' | 'upload'
 
@@ -169,6 +169,7 @@ export const DEFAULT_DISCLAIMER =
   "Not financial advice. Educational only, no promise of returns. Past results don't guarantee future results."
 
 export const SILENCE_PRESETS: Record<SilenceIntensity, { minSilence: number; margin: number; label: string }> = {
+  off: { minSilence: Infinity, margin: 0, label: 'Desligado' },
   soft: { minSilence: 0.5, margin: 0.15, label: 'Suave' },
   normal: { minSilence: 0.35, margin: 0.1, label: 'Normal' },
   aggressive: { minSilence: 0.2, margin: 0.06, label: 'Agressivo' },
@@ -193,7 +194,7 @@ export function defaultProject(): Project {
     disclaimer: { text: DEFAULT_DISCLAIMER, enabled: true },
     music: { assetId: null, gainDb: -13, start: 0, muteDuringReact: false, ducking: false },
     speed: 1,
-    silence: 'normal',
+    silence: 'off',
     faceDefault: defaultFace(),
     previewHalf: false,
     takeOrder: 'date',
