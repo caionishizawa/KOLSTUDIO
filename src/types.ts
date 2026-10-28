@@ -197,7 +197,7 @@ export function defaultProject(): Project {
     silence: 'off',
     faceDefault: defaultFace(),
     previewHalf: false,
-    takeOrder: 'date',
+    takeOrder: 'upload',
     takesManual: false,
   }
 }

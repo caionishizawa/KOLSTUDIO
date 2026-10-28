@@ -12,7 +12,7 @@ export function parseImageNumber(name: string): { n: number; sub: string } | nul
 /**
  * Atribuição automática de imagens aos takes.
  * - Número no nome manda: "3.png" no take 3, "3a"/"3b" dividem o take 3.
- * - Sem número: preenchem, em ordem, os takes que ficaram sem imagem.
+ * - Sem número: preenchem, na ordem de envio, os takes que ficaram sem imagem.
  * - Sobras: vão para os takes mais longos (um por take, por ordem de duração).
  * Takes com imagesLocked não são alterados.
  * Retorna um mapa takeId -> lista de assetIds.
@@ -26,7 +26,8 @@ export function autoAssignImages(
   const enabledTakes = takes.filter((t) => t.enabled)
   for (const t of takes) result.set(t.id, t.imagesLocked ? [...t.images] : [])
 
-  const sorted = [...images].sort((a, b) => naturalCompare(a.name, b.name))
+  // ordem de envio (como o usuário escolheu os arquivos); o número no nome, quando existe, manda
+  const sorted = [...images].sort((a, b) => (a.uploadIndex ?? 0) - (b.uploadIndex ?? 0) || naturalCompare(a.name, b.name))
   const numbered: { asset: Asset; n: number; sub: string }[] = []
   const unnumbered: Asset[] = []
   for (const img of sorted) {
